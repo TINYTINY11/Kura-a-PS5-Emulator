@@ -121,6 +121,21 @@ firmware-out/
 
 **Legal note:** the tool ships with *no* keys and *no* firmware. Users supply both from hardware they own (§13).
 
+**First-run UX (RPCS3-style firmware install):** on first launch with no firmware tree present, Kura detects it and walks the user through installation instead of failing:
+
+1. Prompt for an official `PS5UPDATE.PUP` — the publicly available Sony update file the user downloads themselves; show a "where to get it" help link.
+2. Ask for the user's `keys/` directory (the step RPCS3 doesn't need — PS5 firmware crypto requires research-derived keys the user must supply, §12).
+3. Run the pipeline interactively with progress: extract → decrypt → install into `firmware/`.
+4. Record the installed firmware version and write a marker file so subsequent launches skip the wizard.
+
+The same flow is exposed as a command for scripted setups:
+
+```
+kura firmware install /path/to/PS5UPDATE.PUP --keys /path/to/keys
+```
+
+The PUP and extracted tree are never committed, never redistributed, and never required by CI — the emulator only ever reads the local extracted tree (`.gitignore` blocks `*.pup`, `firmware/`, `keys/`).
+
 ### 5.3 Loader (`core/loader/`)
 Responsibilities:
 

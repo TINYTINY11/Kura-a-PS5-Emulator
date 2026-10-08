@@ -3,6 +3,7 @@ firmware/
 firmware-out/
 keys/
 *.pup
+*.PUP
 *.pkg
 *.spkg
 *.self
