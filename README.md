@@ -12,6 +12,22 @@ Early planning / pre-alpha. See [docs/DESIGN.md](docs/DESIGN.md) for the full ar
 - **Host-GPU accelerated** — all guest rendering and compute runs in hardware via Vulkan; no software rasterizer. Resolution scaling and post-processing use the host GPU's headroom.
 - **Firmware-driven** — boots a firmware tree extracted from a console you own; no keys or Sony code are ever included in this repository.
 
+## First boot experience
+
+Designed like RPCS3's firmware install:
+
+1. **No firmware? Kura asks for it.** On first launch a file picker prompts you for Sony's official `PS5UPDATE.PUP` (publicly downloadable).
+2. **Keys folder** — point Kura at your `keys/` directory (from your own console or published research).
+3. **One-time firmware build** — Kura extracts, decrypts, and installs the PUP into its local `firmware/` tree with a progress bar. Runs once; a marker file records the version.
+4. **Boot** — every launch after that goes straight into emulation: kernel HLE → system modules → the shell → **home screen**.
+
+```
+kura --firmware /path/to/PS5UPDATE.PUP   # one-time firmware install
+kura                                      # every launch after that
+```
+
+**UI style:** a clean, translucent Windows 11-style wizard — every stage visible (Extract → Decrypt → Install), progress always explained, drag-and-drop supported. Nothing hidden behind mystery spinners.
+
 ## Predicted system requirements
 
 **GPU:** anything with Vulkan 1.3 — NVIDIA RTX 20-series (2018) / AMD RX 5000 / Intel Arc or newer · **VRAM:** 6 GB · **CPU:** 6+ cores · **RAM:** 16 GB · **Storage:** SSD · **OS:** Windows 11 x64

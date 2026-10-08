@@ -128,6 +128,8 @@ firmware-out/
 3. Run the pipeline interactively with progress: extract → decrypt → install into `firmware/`.
 4. Record the installed firmware version and write a marker file so subsequent launches skip the wizard.
 
+**Look & feel:** the first-run window follows Windows 11 fluent design — translucent (Mica/Acrylic) chrome, rounded corners, generous spacing, one step per screen with plain-language labels. Transparency applies to both senses of the word: the window *looks* clean and see-through, and the process *is* transparent — always show the current stage (Extract → Decrypt → Install), a percentage, the file being processed, and an expandable log for anyone who wants the raw detail. No dead spinners, no unexplained waits. Drag-and-drop of the PUP onto the window works as a shortcut for the file picker. The main emulator window uses the same visual language.
+
 The same flow is exposed as a command for scripted setups:
 
 ```
