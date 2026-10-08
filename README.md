@@ -12,7 +12,7 @@ Early planning / pre-alpha. See [docs/DESIGN.md](docs/DESIGN.md) for the full ar
 - **Host-GPU accelerated** — all guest rendering and compute runs in hardware via Vulkan; no software rasterizer. Resolution scaling and post-processing use the host GPU's headroom.
 - **Firmware-driven** — boots a firmware tree extracted from a console you own; no keys or Sony code are ever included in this repository.
 
-## System requirements (proposed)
+## Predicted system requirements
 
 **GPU:** anything with Vulkan 1.3 — NVIDIA RTX 20-series (2018) / AMD RX 5000 / Intel Arc or newer · **VRAM:** 6 GB · **CPU:** 6+ cores · **RAM:** 16 GB · **Storage:** SSD
 

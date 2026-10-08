@@ -1,8 +1,8 @@
-# Kura — System Requirements & Spec List
+# Kura — Predicted System Requirements
 
-_Status: **proposed** pre-alpha targets. These are design-stage numbers, validated with real benchmarks once M4 (GPU) lands._
+_Status: **predicted** — these are estimates made during planning, not measured benchmarks. Real numbers will be confirmed once Kura is running and can be tested on actual hardware._
 
-## 1. Host requirements (the PC running Kura)
+## 1. Predicted host requirements (the PC running Kura)
 
 | Component | Minimum | Recommended |
 |---|---|---|
