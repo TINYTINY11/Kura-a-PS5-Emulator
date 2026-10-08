@@ -9,7 +9,7 @@
 ## 1. Goals and non-goals
 
 ### Goals
-1. **Boot real PS5 firmware** (dumped from the designer's own console) through the kernel/user boundary far enough to run the system shell (`shellui`) and display the home screen.
+1. **Boot real PS5 firmware** (the official system software, supplied by the user) through the kernel/user boundary far enough to run the system shell (`shellui`) and display the home screen.
 2. **Full host-GPU acceleration**: every guest draw and compute dispatch runs on real hardware via Vulkan — Kura ships no software rasterizer, and host GPU headroom is used for extra features (see §5.8).
 3. Clean **layered architecture** so subsystems can be replaced (interpreter → JIT, HLE → LLE) without rewriting the core.
 4. **Cross-platform host**: Windows primary, Linux secondary.
@@ -109,7 +109,7 @@ A **separate CLI tool**, never linked into the emulator:
 
 1. **PUP parser** — split the update container into system images.
 2. **Image extraction** — reconstruct the system partition layout.
-3. **Decryption** — apply keys obtained from the user's own console research; keys live in a local, git-ignored `keys/` directory (never committed, never redistributed).
+3. **Decryption** — apply keys obtained from the user's own console or published research; keys live in a local, git-ignored `keys/` directory (never committed, never redistributed).
 4. **Output layout** — a directory tree the emulator mounts as its root filesystem:
 
 ```
@@ -375,9 +375,15 @@ Sequencing rationale: M4 (GPU) is started in parallel with M3 by whoever isn't b
 
 - **Emulation itself is lawful** in key jurisdictions (precedents: *Sega v. Accolade*, *Sony v. Connectix*), and clean-room reimplementation from observation is the accepted model.
 - **Do not redistribute** firmware, keys, games, or any Sony-copyrighted bytes — not in the repo, not in tests, not in CI, not in screenshots of our own tests.
-- Firmware/keys come from **consoles and content the user owns**; the extraction tool documents that requirement and bundles no secrets.
+- Firmware/keys come from **two acceptable paths**: the user's own console, **or published community research** (with attribution noted in `docs/`). The official `PS5UPDATE.PUP` is publicly distributed by Sony's update servers and downloaded by the user. The extraction tool bundles no secrets either way.
 - Document your sources of RE knowledge in `docs/` — independent derivation matters.
 - Keep firmware-dependent tests **local-only**; CI runs the firmware-free suites.
+
+**Working without a console (valid and common):**
+
+- Milestones M0–M4 require **no firmware and no keys** — they run on synthetic tests and homebrew guest binaries.
+- M5–M6 (booting the real shell) need the PUP + keys, which can come from published research rather than owned hardware.
+- The tradeoff: no live hardware to trace behavior against. Mitigations: published RE, community collaboration, and hardware-based comparison testing later if a console becomes available.
 
 ---
 

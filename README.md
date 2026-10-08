@@ -20,7 +20,7 @@ _Not yet — M0 (repo scaffolding, CI, tracing) is the first milestone._
 
 - Emulator code in this repository is original work.
 - This project ships **no** firmware, encryption keys, or any Sony-copyrighted material.
-- You must supply your own firmware dumped from hardware you own. See `docs/DESIGN.md` §12 before contributing.
+- You supply the official `PS5UPDATE.PUP` (publicly distributed by Sony's update servers) and a `keys/` directory obtained from your own console or published research. See `docs/DESIGN.md` §12 before contributing.
 
 ## License
 
