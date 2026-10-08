@@ -12,6 +12,19 @@ Early planning / pre-alpha. See [docs/DESIGN.md](docs/DESIGN.md) for the full ar
 - **Host-GPU accelerated** — all guest rendering and compute runs in hardware via Vulkan; no software rasterizer. Resolution scaling and post-processing use the host GPU's headroom.
 - **Firmware-driven** — boots a firmware tree extracted from a console you own; no keys or Sony code are ever included in this repository.
 
+## System requirements (proposed — pre-alpha targets, not yet measured)
+
+| Component | Minimum | Recommended |
+|---|---|---|
+| GPU | NVIDIA RTX 20-series (2018) / AMD RX 5000 / Intel Arc — anything with **Vulkan 1.3** | RTX 30-series or newer |
+| VRAM | 6 GB | 6 GB (8 GB+ once game support matures) |
+| CPU | 6 cores | 8 cores / 16 threads (guest is 8C/16T Zen 2) |
+| RAM | 16 GB (guest has 16 GB GDDR6) | 16 GB+ |
+| Storage | SSD, ~10 GB free for firmware | NVMe SSD (matches the guest's fast-storage assumptions) |
+| OS | Windows 10/11 64-bit, or Linux with Vulkan 1.3 drivers | — |
+
+_Virtualization note: these targets apply to the host-GPU accelerated design (§5.8 of the design doc) — all guest rendering runs in hardware, so any modern Vulkan GPU qualifies._
+
 ## Building
 
 _Not yet — M0 (repo scaffolding, CI, tracing) is the first milestone._
