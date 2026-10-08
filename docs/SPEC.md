@@ -11,7 +11,7 @@ _Status: **predicted** — these are estimates made during planning, not measure
 | CPU | 6 cores | 8 cores / 16 threads |
 | RAM | 16 GB | 16 GB+ |
 | Storage | SSD, ~10 GB free for firmware | NVMe SSD |
-| OS | Windows 10/11 64-bit, or Linux | — |
+| OS | **Windows 11 x64** | Windows 11 x64, fully updated |
 | Graphics API | **Vulkan 1.3** (drivers up to date) | — |
 
 ### Why these numbers

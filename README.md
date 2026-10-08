@@ -14,7 +14,7 @@ Early planning / pre-alpha. See [docs/DESIGN.md](docs/DESIGN.md) for the full ar
 
 ## Predicted system requirements
 
-**GPU:** anything with Vulkan 1.3 — NVIDIA RTX 20-series (2018) / AMD RX 5000 / Intel Arc or newer · **VRAM:** 6 GB · **CPU:** 6+ cores · **RAM:** 16 GB · **Storage:** SSD
+**GPU:** anything with Vulkan 1.3 — NVIDIA RTX 20-series (2018) / AMD RX 5000 / Intel Arc or newer · **VRAM:** 6 GB · **CPU:** 6+ cores · **RAM:** 16 GB · **Storage:** SSD · **OS:** Windows 11 x64
 
 Full breakdown — including the reference dev rig and the PS5 specs being emulated — is in [docs/SPEC.md](docs/SPEC.md).
 
