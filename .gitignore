@@ -1,0 +1,46 @@
+# --- Never commit firmware or keys (see docs/DESIGN.md §12) ---
+firmware/
+firmware-out/
+keys/
+*.pup
+*.pkg
+*.spkg
+*.self
+*.elf.bin
+
+# --- Build ---
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.pdb
+
+# --- Dependencies / package managers ---
+vcpkg_installed/
+.conan/
+.cache/
+
+# --- IDE / editor ---
+.vs/
+.vscode/
+.idea/
+*.swp
+*.user
+*.suo
+
+# --- OS junk ---
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- Logs / dumps ---
+*.log
+traces/
+dumps/
