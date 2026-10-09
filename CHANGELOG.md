@@ -8,6 +8,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 2 — syscall depth (identity, clock, sleep, sysctl) + exit-routing fix**
+- `clock_gettime` (232, predicted) with FreeBSD amd64 `timespec`: `CLOCK_REALTIME` from the host wall clock, `CLOCK_MONOTONIC` (id 4) since guest boot, `EINVAL` otherwise
+- `nanosleep` (60) — reads the guest `timespec`, really sleeps (clamped to 250 ms so a mis-set guest timer can never freeze the window; documented deviation)
+- Identity syscalls: `getuid/geteuid/getgid/getegid` (24–27, predicted) return 0 pending real-binary uid mapping; `getppid` (114, predicted) walks the process table
+- `ioctl` (54, predicted) — EBADF for bad fds, otherwise FreeBSD's non-tty `ENOTTY` until termios/winsize shapes are confirmed
+- `sysctl` (202) read-only mini-tree: `kern.osrelease` (string), `kern.argmax`, `hw.pagesize` (4096), `hw.ncpu` (8, TBD) with full oldlenp semantics — size probe, `ENOMEM` + length write-back for short buffers, `EPERM` for writes, `ENOENT` for unknown MIBs (all values/errors predicted)
+- `Vfs::has_fd` probe for ioctl's EBADF-vs-ENOTTY distinction
+- **Fixed**: interpreter routed syscall 60 to the exit hook ("Linux-style exit") — on FreeBSD 60 is `nanosleep` (predicted), so a sleeping guest would have been *killed*. Exit is now FreeBSD's 1 only
+- `unit.kernel` extended: identity/ppid, clock + sleep timing, ioctl, sysctl probe/fetch/short-buffer/ENOTTY/EPERM paths — 9/9 suites green
+
 **M3 stage 1 — kernel HLE skeleton (FreeBSD-style syscalls)**
 - `Kernel` — process table (init pid 1 + spawn), syscall dispatch into RAX with FreeBSD-style `-errno` returns, interpreter hooks for SYSCALL/exit, anonymous mmap via a bump allocator with guard gaps, host clock via `gettimeofday` (`core/kernel/kernel.*`)
 - `Vfs` — in-memory namespace with POSIX-ish semantics: fd table with stdin/EOF + stdout/stderr capture into the `guest.out` log channel, `open/read/write/lseek/close` with FreeBSD flag values, named store as source of truth so writes persist across fds and reopens (`core/kernel/vfs.*`)

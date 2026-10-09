@@ -19,7 +19,7 @@
 
 namespace kura::kernel::sys {
 
-// --- syscalls we implement in M3 stage 1 ------------------------------------
+// --- syscalls implemented through M3 stage 1 --------------------------------
 inline constexpr std::uint64_t kExit = 1;         // exit(int code)
 inline constexpr std::uint64_t kRead = 3;         // read(fd, buf, nbyte)
 inline constexpr std::uint64_t kWrite = 4;        // write(fd, buf, nbyte)
@@ -31,12 +31,23 @@ inline constexpr std::uint64_t kGettimeofday = 116; // gettimeofday(tv, tz)
 inline constexpr std::uint64_t kMmap = 477;       // mmap(...) — see kernel.cpp
 inline constexpr std::uint64_t kLseek = 478;      // lseek(fd, pad, off, whence)
 
+// --- added in M3 stage 2 ----------------------------------------------------
+inline constexpr std::uint64_t kIoctl = 54;      // ioctl(fd, req, argp)
+inline constexpr std::uint64_t kNanosleep = 60;  // nanosleep(req, rem)
+// NOTE: Linux uses 60 for its exit syscall — a PS5 (FreeBSD) binary never
+// does. The interpreter must NOT treat 60 as an exit or a sleeping guest
+// would be killed (fixed in M3 stage 2).
+inline constexpr std::uint64_t kGetuid = 24;
+inline constexpr std::uint64_t kGeteuid = 25;
+inline constexpr std::uint64_t kGetgid = 26;
+inline constexpr std::uint64_t kGetegid = 27;
+inline constexpr std::uint64_t kGetppid = 114;   // getppid()
+inline constexpr std::uint64_t kClockGettime = 232; // clock_gettime(id, ts)
+
 // Commonly reached but not yet implemented — these return -kENOSYS, which
 // real binaries treat as "feature absent" and route around.
 inline constexpr std::uint64_t kMprotect = 74;
 inline constexpr std::uint64_t kSysctl = 202;
-
-inline constexpr std::uint64_t kLinuxExit = 60; // Linux-style exit, tolerated
 
 const char* name(std::uint64_t nr);
 

@@ -676,7 +676,10 @@ bool Interpreter::step(RunResult& out) {
         if (op2 == 0x05) { // SYSCALL
             st_.rip = pc_;
             const std::uint64_t nr = st_.gpr[RAX];
-            if ((nr == 1 || nr == 60) && exit_hook_) {
+            // FreeBSD amd64 exit is syscall 1. Linux's exit happens to be
+            // 60 — on FreeBSD that number belongs to nanosleep (predicted),
+            // so routing it here would KILL a guest that merely slept.
+            if (nr == 1 && exit_hook_) {
                 const int code = static_cast<int>(st_.gpr[RDI]);
                 if (!exit_hook_(st_, code, exit_user_)) {
                     out.exit_code = code;

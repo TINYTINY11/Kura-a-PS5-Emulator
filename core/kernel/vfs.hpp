@@ -49,6 +49,8 @@ public:
     std::int64_t lseek(int fd, std::int64_t offset, int whence);
 
     bool exists(const std::string& path) const;
+    // fd validity probe (ioctl distinguishes EBADF from ENOTTY).
+    bool has_fd(int fd) const { return fds_.find(fd) != fds_.end(); }
     // Host-side inspection (tests / debugger): full contents of a file.
     std::optional<std::vector<std::byte>> file_bytes(const std::string& path) const;
     // Bytes written to fd 1/2 since construction.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
 
 #include "common/log.hpp"
 #include "kernel/syscalls.hpp"
@@ -22,7 +23,14 @@ const char* sys::name(std::uint64_t nr) {
         case kSysctl: return "sysctl";
         case kMmap: return "mmap";
         case kLseek: return "lseek";
-        case kLinuxExit: return "exit (linux-style)";
+        case kIoctl: return "ioctl";
+        case kNanosleep: return "nanosleep";
+        case kGetuid: return "getuid";
+        case kGeteuid: return "geteuid";
+        case kGetgid: return "getgid";
+        case kGetegid: return "getegid";
+        case kGetppid: return "getppid";
+        case kClockGettime: return "clock_gettime";
         default: return "unknown";
     }
 }
@@ -134,11 +142,24 @@ bool Kernel::read_path(std::uint64_t addr, std::string& out) {
 std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
     using namespace sys;
     const std::uint64_t a0 = arg(st, 0), a1 = arg(st, 1), a2 = arg(st, 2);
-    const std::uint64_t a3 = arg(st, 3), a4 = arg(st, 4);
+    const std::uint64_t a3 = arg(st, 3), a4 = arg(st, 4), a5 = arg(st, 5);
 
     switch (nr) {
     case kGetpid:
         return static_cast<std::int64_t>(current_pid_);
+
+    case kGetuid:
+    case kGeteuid:
+    case kGetgid:
+    case kGetegid:
+        // Root for now. The PS5 runs games as an unprivileged user; the
+        // real uid/gid map needs real binaries to confirm (predicted 0).
+        return 0;
+
+    case kGetppid: {
+        const Process* p = current();
+        return p ? static_cast<std::int64_t>(p->ppid) : 0;
+    }
 
     case kWrite:
         return vfs_.write(static_cast<int>(a0), mem_, a1, a2);
@@ -220,6 +241,105 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
         // No protection bits are enforced by the interpreter today; claim
         // success so binaries proceed. Revisit with paging.
         return 0;
+
+    case kClockGettime: {
+        // FreeBSD amd64: struct timespec { int64 tv_sec; int64 tv_nsec; }
+        if (a1 == 0) return -kEFAULT;
+        std::int64_t sec = 0, nsec = 0;
+        if (a0 == 0) { // CLOCK_REALTIME
+            const auto now =
+                std::chrono::system_clock::now().time_since_epoch();
+            sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+            nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(now)
+                       .count() -
+                   sec * 1000000000;
+        } else if (a0 == 4) { // CLOCK_MONOTONIC (FreeBSD numbering)
+            const auto now =
+                std::chrono::steady_clock::now().time_since_epoch();
+            sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+            nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(now)
+                       .count() -
+                   sec * 1000000000; // "since Kura start" — guest boot
+        } else {
+            return -kEINVAL;
+        }
+        if (!mem_.write_value(a1, sec) || !mem_.write_value(a1 + 8, nsec))
+            return -kEFAULT;
+        return 0;
+    }
+
+    case kNanosleep: {
+        if (a0 == 0) return -kEFAULT;
+        std::int64_t sec = 0, nsec = 0;
+        if (!mem_.read_value(a0, sec) || !mem_.read_value(a0 + 8, nsec))
+            return -kEFAULT;
+        if (sec < 0 || nsec < 0 || nsec >= 1000000000) return -kEINVAL;
+        auto d = std::chrono::seconds(sec) + std::chrono::nanoseconds(nsec);
+        // Clamp: boot code sleeps in milliseconds — a mis-set guest timer
+        // must never freeze the window for minutes (documented deviation).
+        constexpr auto kMax = std::chrono::milliseconds(250);
+        if (d > kMax) {
+            log::debug("kernel.sys", "nanosleep clamped to 250ms");
+            d = kMax;
+        }
+        std::this_thread::sleep_for(d);
+        return 0;
+    }
+
+    case kIoctl:
+        // Predicted number 54. FreeBSD's non-tty answer for every request
+        // until the termios/winsize shapes are confirmed against real
+        // binaries — isatty()-style probes treat ENOTTY cleanly.
+        if (!vfs_.has_fd(static_cast<int>(a0))) return -kEBADF;
+        return -kENOTTY;
+
+    case kSysctl: {
+        // sysctl(2), FreeBSD amd64: int *name, u_int namelen, void *oldp,
+        // size_t *oldlenp, void *newp, size_t newlen. Kura's tree is
+        // read-only; all numbers below are predicted from FreeBSD.
+        if (a4 != 0 || a5 != 0) return -kEPERM; // writes rejected
+        if (a1 == 0 || a1 > 16) return -kEINVAL;
+        if (a3 == 0) return -kEFAULT; // oldlenp is mandatory
+        int mib[16] = {};
+        for (std::uint64_t i = 0; i < a1; ++i)
+            if (!mem_.read_value(a0 + i * 4, mib[i])) return -kEFAULT;
+
+        const bool kern = mib[0] == 1; // CTL_KERN
+        const bool hw = mib[0] == 6;   // CTL_HW
+        const int leaf = (a1 > 1) ? mib[1] : -1;
+
+        enum class Kind { Str, Int } kind = Kind::Int;
+        std::string s;
+        std::int32_t v = 0;
+        if (kern && a1 == 2 && leaf == 2) { // KERN_OSRELEASE
+            kind = Kind::Str;
+            s = "11.0-Kura"; // predicted shape of kern.osrelease
+        } else if (kern && a1 == 2 && leaf == 1) { // KERN_ARG_MAX
+            v = 262144;
+        } else if (hw && a1 == 2 && leaf == 7) { // HW_PAGESIZE
+            v = 4096;
+        } else if (hw && a1 == 2 && leaf == 3) { // HW_NCPU
+            v = 8; // predicted: PS5 core count exposed to the OS (TBD)
+        } else {
+            return -kENOENT;
+        }
+
+        const std::uint64_t need =
+            (kind == Kind::Str) ? s.size() + 1 : sizeof(std::int32_t);
+        std::uint64_t have = 0;
+        if (!mem_.read_value(a3, have)) return -kEFAULT;
+        if (a2 == 0) // size probe: report the required length
+            return mem_.write_value(a3, need) ? 0 : -kEFAULT;
+        if (have < need) {
+            mem_.write_value(a3, need); // FreeBSD updates the length out
+            return -kENOMEM;            // (predicted error for short buffer)
+        }
+        const bool wrote = (kind == Kind::Str)
+                               ? mem_.write(a2, s.c_str(), need)
+                               : mem_.write_value(a2, v);
+        if (!wrote) return -kEFAULT;
+        return mem_.write_value(a3, need) ? 0 : -kEFAULT;
+    }
 
     default:
         log::debug("kernel.sys", "syscall ", nr, " (", name(nr),

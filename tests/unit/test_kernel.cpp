@@ -7,6 +7,7 @@
 #include "kernel/syscalls.hpp"
 #include "memory/guest_memory.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -32,10 +33,11 @@ namespace sys = kura::kernel::sys;
 constexpr std::uint64_t kScratch = 0x100000; // mapped test buffer
 
 // Build a CpuState positioned for a syscall: number in RAX, args in the
-// amd64 order (RDI, RSI, RDX, R10, R8).
+// amd64 order (RDI, RSI, RDX, R10, R8, R9).
 cpu::CpuState st_for(std::uint64_t nr, std::uint64_t a0 = 0,
                      std::uint64_t a1 = 0, std::uint64_t a2 = 0,
-                     std::uint64_t a3 = 0, std::uint64_t a4 = 0) {
+                     std::uint64_t a3 = 0, std::uint64_t a4 = 0,
+                     std::uint64_t a5 = 0) {
     cpu::CpuState st{};
     st.gpr[cpu::RAX] = nr;
     st.gpr[cpu::RDI] = a0;
@@ -43,6 +45,7 @@ cpu::CpuState st_for(std::uint64_t nr, std::uint64_t a0 = 0,
     st.gpr[cpu::RDX] = a2;
     st.gpr[cpu::R10] = a3;
     st.gpr[cpu::R8] = a4;
+    st.gpr[cpu::R9] = a5;
     return st;
 }
 
@@ -231,6 +234,129 @@ void test_guest_program_syscalls_end_to_end() {
     CHECK(k.vfs().tty_text().find("Hello kernel") != std::string::npos);
 }
 
+void test_identity_and_ppid() {
+    GuestMemory mem;
+    Kernel k(mem);
+    for (std::uint64_t nr : {sys::kGetuid, sys::kGeteuid, sys::kGetgid,
+                             sys::kGetegid}) {
+        auto st = st_for(nr);
+        CHECK(call(k, st) == 0); // predicted root placeholder
+    }
+    auto st = st_for(sys::kGetppid);
+    CHECK(call(k, st) == 0); // init has no parent
+    k.spawn_process("child", 5);
+    st = st_for(sys::kGetppid);
+    CHECK(call(k, st) == 1); // child's parent is init
+}
+
+void test_clock_gettime_and_nanosleep() {
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kScratch, 0x1000));
+
+    // CLOCK_REALTIME fills a plausible wall clock
+    auto st = st_for(sys::kClockGettime, 0, kScratch);
+    CHECK(call(k, st) == 0);
+    std::int64_t sec = 0, nsec = 0;
+    CHECK(mem.read_value(kScratch, sec));
+    CHECK(mem.read_value(kScratch + 8, nsec));
+    CHECK(sec > 1'700'000'000);
+    CHECK(nsec >= 0 && nsec < 1'000'000'000);
+
+    // CLOCK_MONOTONIC (FreeBSD id 4): overwrite with a sentinel first so
+    // the check proves the kernel wrote something fresh
+    CHECK(mem.write_value(kScratch + 0x40, std::int64_t{-1}));
+    st = st_for(sys::kClockGettime, 4, kScratch + 0x40);
+    CHECK(call(k, st) == 0);
+    CHECK(mem.read_value(kScratch + 0x40, sec));
+    CHECK(sec != -1);
+
+    st = st_for(sys::kClockGettime, 99, kScratch);
+    CHECK(call(k, st) == -sys::kEINVAL);
+
+    // nanosleep(3ms) returns 0 and really waits (lower bound only —
+    // host timer granularity varies)
+    CHECK(mem.write_value(kScratch + 0x80, std::int64_t{0}));
+    CHECK(mem.write_value(kScratch + 0x88, std::int64_t{3'000'000}));
+    const auto t0 = std::chrono::steady_clock::now();
+    st = st_for(sys::kNanosleep, kScratch + 0x80);
+    CHECK(call(k, st) == 0);
+    const auto waited = std::chrono::steady_clock::now() - t0;
+    CHECK(waited >= std::chrono::milliseconds(1));
+
+    // malformed timespec is EINVAL
+    CHECK(mem.write_value(kScratch + 0x80, std::int64_t{-1}));
+    st = st_for(sys::kNanosleep, kScratch + 0x80);
+    CHECK(call(k, st) == -sys::kEINVAL);
+}
+
+void test_ioctl_enotty() {
+    GuestMemory mem;
+    Kernel k(mem);
+    // a tty termios probe gets the FreeBSD non-tty answer for now
+    auto st = st_for(sys::kIoctl, 1, 0x402C7413, 0);
+    CHECK(call(k, st) == -sys::kENOTTY);
+    st = st_for(sys::kIoctl, 999, 0, 0); // invalid fd
+    CHECK(call(k, st) == -sys::kEBADF);
+}
+
+void test_sysctl() {
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kScratch, 0x1000));
+    const auto put_i32 = [&](std::uint64_t off, std::int32_t v) {
+        CHECK(mem.write_value(kScratch + off, v));
+    };
+
+    // kern.osrelease: size probe then fetch
+    put_i32(0x00, 1); // CTL_KERN
+    put_i32(0x04, 2); // KERN_OSRELEASE
+    CHECK(mem.write_value(kScratch + 0x40, std::uint64_t{0}));
+    auto st = st_for(sys::kSysctl, kScratch, 2, 0, kScratch + 0x40);
+    CHECK(call(k, st) == 0);
+    std::uint64_t need = 0;
+    CHECK(mem.read_value(kScratch + 0x40, need));
+    CHECK(need > 1);
+
+    CHECK(mem.write_value(kScratch + 0x40, need));
+    st = st_for(sys::kSysctl, kScratch, 2, kScratch + 0x100, kScratch + 0x40);
+    CHECK(call(k, st) == 0);
+    char s[64] = {};
+    CHECK(mem.read(kScratch + 0x100, s, 64));
+    CHECK(std::string(s).find("Kura") != std::string::npos);
+
+    // hw.pagesize == 4096
+    put_i32(0x20, 6); // CTL_HW
+    put_i32(0x24, 7); // HW_PAGESIZE
+    CHECK(mem.write_value(kScratch + 0x44, std::uint64_t{8}));
+    st = st_for(sys::kSysctl, kScratch + 0x20, 2, kScratch + 0x200,
+                kScratch + 0x44);
+    CHECK(call(k, st) == 0);
+    std::int32_t page = 0;
+    CHECK(mem.read_value(kScratch + 0x200, page));
+    CHECK(page == 4096);
+
+    // unknown MIB -> ENOENT
+    put_i32(0x30, 99);
+    put_i32(0x34, 99);
+    CHECK(mem.write_value(kScratch + 0x48, std::uint64_t{64}));
+    st = st_for(sys::kSysctl, kScratch + 0x30, 2, kScratch + 0x240,
+                kScratch + 0x48);
+    CHECK(call(k, st) == -sys::kENOENT);
+
+    // too-small buffer -> ENOMEM with the required length written back
+    CHECK(mem.write_value(kScratch + 0x4C, std::uint64_t{1}));
+    st = st_for(sys::kSysctl, kScratch, 2, kScratch + 0x280, kScratch + 0x4C);
+    CHECK(call(k, st) == -sys::kENOMEM);
+    std::uint64_t updated = 0;
+    CHECK(mem.read_value(kScratch + 0x4C, updated));
+    CHECK(updated == need);
+
+    // writes to the tree -> EPERM (a4 = newp, a5 = newlen)
+    st = st_for(sys::kSysctl, kScratch, 2, 0, kScratch + 0x40, kScratch, 8);
+    CHECK(call(k, st) == -sys::kEPERM);
+}
+
 } // namespace
 
 int main() {
@@ -239,6 +365,10 @@ int main() {
     test_anon_mmap_round_trip();
     test_open_write_lseek_read();
     test_tty_capture_and_gettimeofday();
+    test_identity_and_ppid();
+    test_clock_gettime_and_nanosleep();
+    test_ioctl_enotty();
+    test_sysctl();
     test_guest_program_syscalls_end_to_end();
     if (g_failures == 0) std::cout << "test_kernel: all checks passed\n";
     return g_failures == 0 ? 0 : 1;

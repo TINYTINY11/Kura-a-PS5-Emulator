@@ -16,6 +16,7 @@
 		<BuildDependency Project="tests/unit/kura_cpu_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_elf_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_firmware.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_kernel_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_memory_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_net_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_pup.vcxproj"/>
@@ -59,6 +60,10 @@
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 	</Project>
 	<Project Path="tools/firmware/kura_firmware.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="5046019e-548f-370e-88e2-2e693618ccbd">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
+	<Project Path="tests/unit/kura_kernel_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="b419b769-0c9b-3e5d-93c4-d70ecdc23919">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 	</Project>
