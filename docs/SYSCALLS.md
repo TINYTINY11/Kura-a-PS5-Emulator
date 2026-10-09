@@ -39,7 +39,7 @@ binaries route around) · ⏳ planned
 | 190 | `lstat` | ✅ | `== stat` — no symlinks in the stage-4 Vfs |
 | 202 | `sysctl` | ✅ | read-only tree: `kern.osrelease`, `kern.argmax`, `hw.pagesize`, `hw.ncpu`; full `oldlenp` probe/short-buffer semantics |
 | 232 | `clock_gettime` | ✅ | `CLOCK_REALTIME` + `CLOCK_MONOTONIC` (FreeBSD id 4) |
-| 477 | `mmap` | ✅ | anonymous + `MAP_FIXED`; file-backed → ⭕ for now |
+| 477 | `mmap` | ✅ | anonymous, `MAP_FIXED`, and **file-backed** (fd bytes via Vfs; tail past EOF zero-filled); `MAP_SHARED` file maps → `-ENOSYS` pending writeback |
 | 478 | `lseek` | ✅ | `SEEK_SET/CUR/END` |
 
 Also tolerated: any unknown number → `-ENOSYS` (logged at debug), which
@@ -51,7 +51,6 @@ real FreeBSD binaries treat as "feature absent".
 |---|---|---|
 | threads (`thr_new` family, FreeBSD 430s) | ⏳ | needs a scheduler + per-thread interpreter state; the M3 exit gate ("multi-threaded guest tests run") |
 | futex / `__umtx_op` (~454, predicted) | ⏳ | pairs with threads |
-| file-backed `mmap` | ⏳ | host bridge exists now — wire fd bytes into the mapping |
 | `wait4` (7, high confidence) | ⏳ | first real process-management syscall |
 | dynlib (`sys_dynlib_*`, Sony-proprietary 600+ range) | ⏳ | numbers require PS5-specific research; stub family planned |
 | signals (`sigaction`, `kill`, `sigreturn`) | ⏳ | delivery needs guest signal frames — after threads |

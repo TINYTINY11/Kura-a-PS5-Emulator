@@ -71,6 +71,9 @@ public:
     // false = ENOENT (path) / EBADF (fd)
     bool stat_path(const std::string& path, StatInfo& out) const;
     bool stat_fd(int fd, StatInfo& out) const;
+    // Full contents behind an open fd (store-backed files only; false for
+    // tty fds or unresolvable paths) — feeds file-backed mmap.
+    bool fd_bytes(int fd, std::vector<std::byte>& out) const;
 
     // --- host bridge (M3 stage 4) ------------------------------------------
     // Mounts a real host directory as the backing store for guest paths

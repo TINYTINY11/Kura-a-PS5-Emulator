@@ -7,6 +7,7 @@
 #include "kernel/syscalls.hpp"
 #include "memory/guest_memory.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -424,6 +425,62 @@ void test_stat_family() {
     CHECK(call(k, st) == -sys::kEBADF);
 }
 
+void test_file_backed_mmap() {
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kScratch, 0x4000));
+
+    // Build a 0x1800-byte pattern file through the syscall interface.
+    std::vector<std::uint8_t> pattern(0x1800);
+    for (std::size_t i = 0; i < pattern.size(); ++i)
+        pattern[i] = static_cast<std::uint8_t>((i * 7 + 3) & 0xFF);
+    CHECK(mem.write(kScratch + 0x2000, pattern.data(), pattern.size()));
+    write_cstr(mem, kScratch, "/mmap.bin");
+    auto st = st_for(sys::kOpen, kScratch,
+                     kura::kernel::kOCreat | kura::kernel::kORdwr);
+    const std::int64_t fd = call(k, st);
+    CHECK(fd >= 3);
+    st = st_for(sys::kWrite, static_cast<std::uint64_t>(fd),
+                kScratch + 0x2000, 0x1800);
+    CHECK(call(k, st) == 0x1800);
+
+    // mmap(NULL, 0x2000, PROT_RW, MAP_PRIVATE, fd, 0) — not anonymous
+    st = st_for(sys::kMmap, 0, 0x2000, 3, 0x0002,
+                static_cast<std::uint64_t>(fd), 0);
+    const std::int64_t at = call(k, st);
+    CHECK(at > 0);
+    if (at <= 0) return;
+    std::vector<std::uint8_t> got(0x2000);
+    CHECK(mem.read(static_cast<std::uint64_t>(at), got.data(), 0x2000));
+    CHECK(std::equal(got.begin(), got.begin() + 0x1800, pattern.begin()));
+    bool tail_zero = true; // bytes past EOF stay zero-filled
+    for (std::size_t i = 0x1800; i < got.size(); ++i)
+        if (got[i] != 0) tail_zero = false;
+    CHECK(tail_zero);
+
+    // offset into the file: first mapped byte == pattern[0x1000]
+    st = st_for(sys::kMmap, 0, 0x1000, 3, 0x0002,
+                static_cast<std::uint64_t>(fd), 0x1000);
+    const std::int64_t at2 = call(k, st);
+    CHECK(at2 > 0);
+    std::uint8_t first = 0;
+    CHECK(mem.read_value(static_cast<std::uint64_t>(at2), first));
+    CHECK(first == pattern[0x1000]);
+
+    // rejections
+    st = st_for(sys::kMmap, 0, 0x1000, 3, 0x0001, // MAP_SHARED file
+                static_cast<std::uint64_t>(fd), 0);
+    CHECK(call(k, st) == -sys::kENOSYS);
+    st = st_for(sys::kMmap, 0, 0x1000, 3, 0x0002, 999, 0); // bad fd
+    CHECK(call(k, st) == -sys::kEBADF);
+    st = st_for(sys::kMmap, 0, 0x1000, 3, 0x0002,
+                static_cast<std::uint64_t>(fd), 0x999999); // past EOF
+    CHECK(call(k, st) == -sys::kEINVAL);
+    st = st_for(sys::kMmap, 0, 0x1000, 3, 0x0002, static_cast<std::uint64_t>(-1),
+                0); // non-anon, fd -1
+    CHECK(call(k, st) == -sys::kEINVAL);
+}
+
 } // namespace
 
 int main() {
@@ -437,6 +494,7 @@ int main() {
     test_ioctl_enotty();
     test_sysctl();
     test_stat_family();
+    test_file_backed_mmap();
     test_guest_program_syscalls_end_to_end();
     if (g_failures == 0) std::cout << "test_kernel: all checks passed\n";
     return g_failures == 0 ? 0 : 1;

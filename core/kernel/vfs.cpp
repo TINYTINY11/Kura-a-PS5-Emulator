@@ -335,6 +335,15 @@ bool Vfs::stat_path(const std::string& path, StatInfo& out) const {
     return host_stat(path, out); // no side effects — stat never materializes
 }
 
+bool Vfs::fd_bytes(int fd, std::vector<std::byte>& out) const {
+    auto it = fds_.find(fd);
+    if (it == fds_.end() || it->second.tty) return false;
+    auto n = files_.find(it->second.path);
+    if (n == files_.end()) return false;
+    out = n->second.data;
+    return true;
+}
+
 bool Vfs::stat_fd(int fd, StatInfo& out) const {
     auto it = fds_.find(fd);
     if (it == fds_.end()) return false;

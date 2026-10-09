@@ -254,12 +254,24 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
         const std::uint64_t size = round_up_page(len);
         const bool fixed = (a3 & kMapFixed) != 0;
         const bool anon = (a3 & kMapAnon) != 0;
-        if (!anon && static_cast<int>(a4) >= 0) {
-            // file-backed mappings arrive with the host-bridge Vfs stage
-            log::debug("kernel.sys", "mmap: file-backed mapping not yet "
-                                     "supported (fd ", static_cast<int>(a4), ")");
-            return -kENOSYS;
+
+        std::vector<std::byte> data;
+        if (!anon) {
+            // File-backed (M3 stage 5): bytes come through the Vfs — the
+            // host bridge materializes on open, so an fd is always
+            // store-resolvable by the time we map it.
+            const int fd = static_cast<int>(a4);
+            if (fd < 0) return -kEINVAL;
+            if ((a3 & kMapShared) != 0) {
+                log::debug("kernel.sys",
+                           "mmap: MAP_SHARED file mapping needs writeback "
+                           "— not yet supported");
+                return -kENOSYS;
+            }
+            if (!vfs_.fd_bytes(fd, data)) return -kEBADF;
+            if (a5 > data.size()) return -kEINVAL; // offset past EOF
         }
+
         std::uint64_t at = 0;
         if (fixed) {
             if ((a0 & (kPageSize - 1)) != 0) return -kEINVAL;
@@ -271,9 +283,17 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
             log::warn("kernel.sys", "mmap: no room at 0x", at, " for ", size, " bytes");
             return -kENOMEM;
         }
+        if (!anon) {
+            // Copy file bytes in; the tail past EOF stays zero (POSIX would
+            // raise SIGBUS there — documented deviation until paging).
+            const std::uint64_t n =
+                std::min<std::uint64_t>(size, data.size() - a5);
+            if (n > 0) mem_.write(at, data.data() + a5, n);
+        }
         if (!fixed) heap_next_ += size + kPageSize; // guard gap between heaps
         log::debug("kernel.sys", "mmap ", size, " bytes (",
-                   (fixed ? "fixed" : "heap"), ") -> 0x", std::hex, at, std::dec);
+                   (anon ? "anon" : fixed ? "fixed" : "file/heap"), ") -> 0x",
+                   std::hex, at, std::dec);
         return static_cast<std::int64_t>(at);
     }
 

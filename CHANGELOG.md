@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 5 — file-backed mmap**
+- `mmap` with a real fd now maps file bytes into guest memory through the Vfs (host-bridge files included — they're materialized on open, so every fd is store-resolvable); offset-into-file supported, tail past EOF zero-filled (POSIX would SIGBUS — documented deviation until paging)
+- Rejections: non-anon with `fd < 0` → `EINVAL`, `MAP_SHARED` file maps → `-ENOSYS` (writeback pending), bad fd → `EBADF`, offset past EOF → `EINVAL`
+- `Vfs::fd_bytes` accessor; `unit.kernel` covers pattern bytes + offset + all four rejection paths — 10/10 green
+
 **M3 stage 4 — host-bridge Vfs (sandboxed, read-only by construction)**
 - `docs/SYSCALLS.md` — living syscall coverage table (implemented/placeholder/ENOSYS/planned) with the prediction policy and the M3 exit plan per `DESIGN.md`
 - `mount_host(abs_root)` — real host directories back guest paths not in the in-memory store; Kura **never writes host files**: opening for write materializes a private copy first (copy-on-open), so the mounted tree is immutable at the filesystem level (design doc §11)
