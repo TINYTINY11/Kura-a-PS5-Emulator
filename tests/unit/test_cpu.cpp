@@ -230,6 +230,233 @@ void test_faults() {
     }
 }
 
+void test_adc_sbb_carry() {
+    Machine m;
+    // stc ; mov rax,5 ; mov rbx,7 ; adc rax,rbx ; clc ; sbb rax,rbx ;
+    // stc ; mov rax,-1 ; adc rax,1 ; hlt
+    m.setup({
+        0xF9,                                     // stc
+        0x48, 0xC7, 0xC0, 0x05, 0x00, 0x00, 0x00, // mov rax,5
+        0x48, 0xC7, 0xC3, 0x07, 0x00, 0x00, 0x00, // mov rbx,7
+        0x48, 0x11, 0xD8,                         // adc rax,rbx -> 13
+        0xF8,                                     // clc
+        0x48, 0x19, 0xD8,                         // sbb rax,rbx -> 6
+        0xF9,                                     // stc
+        0x48, 0xC7, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, // mov rax,-1
+        0x48, 0x83, 0xD0, 0x00,                   // adc rax,0 -> -1+0+1 = 0, CF=1
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 0);
+    CHECK((m.cpu.rflags & kura::cpu::kCF) != 0); // carry out survived
+}
+
+void test_shifts_and_rotates() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0xF0, 0xFF, 0xFF, 0xFF, // mov rax,-16
+        0x48, 0xC1, 0xE0, 0x04,                   // shl rax,4 -> ...F00
+        0x48, 0xC1, 0xF8, 0x04,                   // sar rax,4 -> ...FF0
+        0x48, 0xD1, 0xE8,                         // shr rax,1 -> 0x7FF...F8
+        0x48, 0xBB, 0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x80,                   // mov rbx,0x8000000000000001
+        0x48, 0xD1, 0xC3,                         // rol rbx,1 -> 3
+        0x48, 0xD1, 0xCB,                         // ror rbx,1 -> back
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 0x7FFFFFFFFFFFFFF8ull);
+    CHECK(m.cpu.gpr[kura::cpu::RBX] == 0x8000000000000001ull);
+}
+
+void test_muldiv_family() {
+    Machine m;
+    // mov rax,100 ; mov rbx,7 ; mul rbx ; div rbx ;
+    // mov rax,-7 ; cqo ; mov rcx,2 ; idiv rcx ; hlt
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x64, 0x00, 0x00, 0x00, // mov rax,100
+        0x48, 0xC7, 0xC3, 0x07, 0x00, 0x00, 0x00, // mov rbx,7
+        0x48, 0xF7, 0xE3,                         // mul rbx -> 700
+        0x48, 0xF7, 0xF3,                         // div rbx -> rax=100 rdx=0
+        0x48, 0xC7, 0xC0, 0xF9, 0xFF, 0xFF, 0xFF, // mov rax,-7
+        0x48, 0x99,                               // cqo
+        0x48, 0xC7, 0xC1, 0x02, 0x00, 0x00, 0x00, // mov rcx,2
+        0x48, 0xF7, 0xF9,                         // idiv rcx -> -3 rem -1
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == static_cast<std::uint64_t>(-3));
+    CHECK(m.cpu.gpr[kura::cpu::RDX] == static_cast<std::uint64_t>(-1));
+}
+
+void test_imul_high_word() {
+    Machine m;
+    // signed 64x64 whose full product needs the high word (RDX):
+    // -3 * 5 = -15 => RDX:RAX = 0xFFFFFFFF_FFFFFFF1
+    m.setup({
+        0x48, 0xC7, 0xC0, 0xFD, 0xFF, 0xFF, 0xFF, // mov rax,-3
+        0x48, 0xC7, 0xC3, 0x05, 0x00, 0x00, 0x00, // mov rbx,5
+        0x48, 0xF7, 0xEB,                         // imul rbx
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 0xFFFFFFFFFFFFFFF1ull);
+    CHECK(m.cpu.gpr[kura::cpu::RDX] == 0xFFFFFFFFFFFFFFFFull);
+}
+
+void test_divide_error() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x05, 0x00, 0x00, 0x00, // mov rax,5
+        0x48, 0xC7, 0xC3, 0x00, 0x00, 0x00, 0x00, // mov rbx,0
+        0x48, 0xF7, 0xF3,                         // div rbx -> #DE
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::DivideError);
+    CHECK(!r.detail.empty());
+}
+
+void test_setcc_cmovcc() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x05, 0x00, 0x00, 0x00, // mov rax,5
+        0x48, 0xC7, 0xC3, 0x07, 0x00, 0x00, 0x00, // mov rbx,7
+        0x48, 0x39, 0xD8,                         // cmp rax,rbx (5 < 7 signed)
+        0x0F, 0x9C, 0xC1,                         // setl cl -> 1
+        0x48, 0x0F, 0x4C, 0xC3,                   // cmovl rax,rbx -> rax=7
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 7);
+    CHECK((m.cpu.gpr[kura::cpu::RCX] & 0xFF) == 1);
+}
+
+void test_cmov_reads_memory_even_when_false() {
+    Machine m;
+    // CMOVcc must fault on unmapped memory even when the condition is
+    // false (real x86 semantics) — otherwise loads would be reordered.
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax,1
+        0x48, 0x39, 0xC0,                         // cmp rax,rax -> ZF (L false)
+        0x48, 0x0F, 0x4C, 0x03,                   // cmovl rax,[rbx]
+    });
+    m.cpu.gpr[kura::cpu::RBX] = 0x90000000ull; // unmapped
+    auto r = m.interp.run(100);
+    CHECK(r.reason == StopReason::DataFault);
+}
+
+void test_xchg() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x2A, 0x00, 0x00, 0x00, // mov rax,42
+        0x48, 0xC7, 0xC3, 0x07, 0x00, 0x00, 0x00, // mov rbx,7
+        0x48, 0x87, 0xD8,                         // xchg rax,rbx
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 7);
+    CHECK(m.cpu.gpr[kura::cpu::RBX] == 42);
+}
+
+void test_acc_imm_and_byte_alu() {
+    Machine m;
+    // add rax,-16 (05) ; add eax,32 (83) ; add al,5 (80) ;
+    // cmp eax,37 (3D) ; je +7 ; mov rax,99 ; hlt
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x10, 0x00, 0x00, 0x00, // mov rax,16
+        0x48, 0x05, 0xF0, 0xFF, 0xFF, 0xFF,       // add rax,-16 -> 0
+        0x83, 0xC0, 0x20,                         // add eax,32 -> 32
+        0x80, 0xC0, 0x05,                         // add al,5 -> 37
+        0x3D, 0x25, 0x00, 0x00, 0x00,             // cmp eax,37 -> ZF
+        0x74, 0x07,                               // je over the mov
+        0x48, 0xC7, 0xC0, 0x63, 0x00, 0x00, 0x00, // mov rax,99 (skipped)
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 37);
+}
+
+void test_imul_imm_forms() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x06, 0x00, 0x00, 0x00, // mov rax,6
+        0x48, 0xC7, 0xC3, 0x07, 0x00, 0x00, 0x00, // mov rbx,7
+        0x48, 0x69, 0xC3, 0x07, 0x00, 0x00, 0x00, // imul rax,rbx,7 -> 49
+        0x48, 0x6B, 0xC0, 0x03,                   // imul rax,rax,3 -> 147
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 147);
+}
+
+void test_not_neg() {
+    Machine m;
+    m.setup({
+        0x48, 0xC7, 0xC0, 0x05, 0x00, 0x00, 0x00, // mov rax,5
+        0x48, 0xF7, 0xD8,                         // neg rax -> -5
+        0x48, 0xF7, 0xD0,                         // not rax -> 4
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 4);
+}
+
+void test_rep_stosq_movsq() {
+    Machine m;
+    m.setup({
+        0x48, 0xBF, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rdi,0x300000
+        0x48, 0xC7, 0xC0, 0x77, 0x66, 0x55, 0x44,                   // mov rax,0x44556677
+        0x48, 0xC7, 0xC1, 0x04, 0x00, 0x00, 0x00,                   // mov rcx,4
+        0xF3, 0x48, 0xAB,                                           // rep stosq
+        0x48, 0xBE, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rsi,0x300000
+        0x48, 0xBF, 0x00, 0x08, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rdi,0x300800
+        0x48, 0xC7, 0xC1, 0x04, 0x00, 0x00, 0x00,                   // mov rcx,4
+        0xF3, 0x48, 0xA5,                                           // rep movsq
+        0x48, 0x89, 0xC8,                                           // mov rax,rcx
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RAX] == 0); // rep drained rcx
+    CHECK(m.cpu.gpr[kura::cpu::RDI] == 0x300820);
+    CHECK(m.cpu.gpr[kura::cpu::RSI] == 0x300020);
+    std::uint64_t v = 0;
+    CHECK(m.mem.read_value(0x300000, v));
+    CHECK(v == 0x44556677ull);
+    CHECK(m.mem.read_value(0x300800, v));
+    CHECK(v == 0x44556677ull);
+    CHECK(m.mem.read_value(0x300818, v));
+    CHECK(v == 0x44556677ull);
+}
+
+void test_string_backward() {
+    Machine m;
+    m.setup({
+        0x48, 0xBF, 0x18, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rdi,0x300018
+        0x48, 0xC7, 0xC0, 0x11, 0x22, 0x33, 0x00,                   // mov rax,0x332211
+        0xFD,                                                       // std (DF=1)
+        0x48, 0xAB,                                                 // stosq
+        0xFC,                                                       // cld
+        0xF4,
+    });
+    auto r = m.interp.run(1000);
+    CHECK(r.reason == StopReason::Halted);
+    CHECK(m.cpu.gpr[kura::cpu::RDI] == 0x300010); // moved backwards
+    CHECK(!m.cpu.df);
+    std::uint64_t v = 0;
+    CHECK(m.mem.read_value(0x300018, v));
+    CHECK(v == 0x332211ull);
+}
+
 } // namespace
 
 int main() {
@@ -244,6 +471,19 @@ int main() {
     test_unhandled_syscall_stops();
     test_movzx_and_lea_rip();
     test_faults();
+    test_adc_sbb_carry();
+    test_shifts_and_rotates();
+    test_muldiv_family();
+    test_imul_high_word();
+    test_divide_error();
+    test_setcc_cmovcc();
+    test_cmov_reads_memory_even_when_false();
+    test_xchg();
+    test_acc_imm_and_byte_alu();
+    test_imul_imm_forms();
+    test_not_neg();
+    test_rep_stosq_movsq();
+    test_string_backward();
     if (g_failures == 0) std::cout << "test_cpu: all checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

@@ -23,7 +23,7 @@ struct SyntheticElf {
     std::size_t code_off = 0x100;
 };
 
-SyntheticElf make_elf(const std::vector<std::uint8_t>& code) {
+SyntheticElf make_elf(const std::vector<std::uint8_t>& code, std::uint16_t e_type = 2) {
     SyntheticElf e;
     const std::size_t total = e.code_off + code.size();
     e.bytes.assign(total, std::byte{0});
@@ -42,7 +42,7 @@ SyntheticElf make_elf(const std::vector<std::uint8_t>& code) {
     e.bytes[4] = std::byte{2}; // ELFCLASS64
     e.bytes[5] = std::byte{1}; // ELFDATA2LSB
     e.bytes[6] = std::byte{1}; // EV_CURRENT
-    put(16, 2, 2);             // ET_EXEC
+    put(16, e_type, 2);         // e_type (ET_EXEC, or SCE type for SELF)
     put(18, 0x3E, 2);          // EM_X86_64
     put(20, 1, 4);             // e_version
     put(24, e.entry, 8);       // e_entry
@@ -139,6 +139,54 @@ void test_load_rejects_truncated_file_image() {
     CHECK(!kura::loader::load_into(*img, elf.bytes.data(), 0x100, mem));
 }
 
+void test_sce_exec_type_accepted() {
+    // PS5/PS4 SELF inner ELFs use the SCE e_type range (0xFE00 ET_SCE_EXEC).
+    auto elf = make_elf({0xF4}, 0xFE00);
+    auto img = kura::loader::parse_elf64(elf.bytes.data(), elf.bytes.size());
+    CHECK(img.has_value());
+    if (!img) return;
+    CHECK(img->entry == 0x400000);
+    CHECK(img->segments.size() == 1);
+
+    auto elf2 = make_elf({0xF4}, 0xFE18); // ET_SCE_DYNAMIC
+    CHECK(kura::loader::parse_elf64(elf2.bytes.data(), elf2.bytes.size()).has_value());
+
+    // non-SCE, non-EXEC types still rejected
+    auto elf3 = make_elf({0xF4}, 0x1234);
+    CHECK(!kura::loader::parse_elf64(elf3.bytes.data(), elf3.bytes.size()).has_value());
+}
+
+void test_find_embedded_elf() {
+    // Community RE: plaintext ELF headers sit at arbitrary offsets inside
+    // decrypted components (e.g. 0x8D318 in emc_ipl). Emulate that layout:
+    // junk prefix (with a fake ELF magic that must NOT match) + real ELF.
+    const std::size_t kPrefix = 313; // deliberately unaligned
+    auto elf = make_elf({0xF4}, 0xFE00);
+
+    std::vector<std::byte> blob(kPrefix + elf.bytes.size() + 64, std::byte{0xAA});
+    // fake ELF magic at 17 with bad class -> parser must skip it
+    blob[17] = std::byte{0x7F};
+    blob[18] = std::byte{'E'};
+    blob[19] = std::byte{'L'};
+    blob[20] = std::byte{'F'};
+    blob[21] = std::byte{9}; // not ELFCLASS64
+    std::memcpy(blob.data() + kPrefix, elf.bytes.data(), elf.bytes.size());
+
+    auto hit = kura::loader::find_embedded_elf(blob.data(), blob.size());
+    CHECK(hit.has_value());
+    if (!hit) return;
+    CHECK(hit->offset == kPrefix);
+    CHECK(hit->image.entry == 0x400000);
+    CHECK(hit->image.segments.size() == 1);
+
+    // scanning past the hit finds nothing
+    CHECK(!kura::loader::find_embedded_elf(blob.data(), blob.size(),
+                                            kPrefix + elf.bytes.size())
+               .has_value());
+    // empty/too-small input
+    CHECK(!kura::loader::find_embedded_elf(blob.data(), 16).has_value());
+}
+
 } // namespace
 
 int main() {
@@ -147,6 +195,8 @@ int main() {
     test_parse_rejects_wrong_machine();
     test_load_into_memory();
     test_load_rejects_truncated_file_image();
+    test_sce_exec_type_accepted();
+    test_find_embedded_elf();
     if (g_failures == 0) std::cout << "test_elf: all checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

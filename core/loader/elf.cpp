@@ -1,6 +1,7 @@
 #include "loader/elf.hpp"
 
 #include <cstring>
+#include <utility>
 
 namespace kura::loader {
 namespace {
@@ -47,7 +48,12 @@ std::optional<ElfImage> parse_elf64(const std::byte* data, std::size_t size) {
 
     const std::uint16_t type = rd16(data + 16);
     const std::uint16_t machine = rd16(data + 18);
-    if (type != 2 && type != 3) return std::nullopt; // ET_EXEC / ET_DYN only
+    // ET_EXEC / ET_DYN, plus the Sony SCE extension range used inside
+    // SELF containers (ET_SCE_EXEC 0xFE00, ET_SCE_REPLAY_EXEC 0xFE04,
+    // ET_SCE_DYNEXEC 0xFE10, ET_SCE_DYNAMIC 0xFE18, ...): community RE
+    // confirms these headers sit in plaintext inside decrypted components.
+    const bool sce_type = type >= 0xFE00 && type <= 0xFE1F;
+    if (type != 2 && type != 3 && !sce_type) return std::nullopt;
     if (machine != kMachineX86_64) return std::nullopt;
 
     ElfImage img;
@@ -79,6 +85,22 @@ std::optional<ElfImage> parse_elf64(const std::byte* data, std::size_t size) {
         img.segments.push_back(s);
     }
     return img;
+}
+
+std::optional<EmbeddedElf> find_embedded_elf(const std::byte* data, std::size_t size,
+                                             std::size_t start) {
+    if (size < kEhdrSize) return std::nullopt;
+    for (std::size_t off = start; off + kEhdrSize <= size; ++off) {
+        const auto b = [&](std::size_t i) {
+            return std::to_integer<std::uint8_t>(data[off + i]);
+        };
+        if (b(0) != 0x7F || b(1) != 'E' || b(2) != 'L' || b(3) != 'F') continue;
+        if (auto img = parse_elf64(data + off, size - off)) {
+            return EmbeddedElf{off, std::move(*img)};
+        }
+        // fake/other-architecture magic — keep scanning
+    }
+    return std::nullopt;
 }
 
 bool load_into(const ElfImage& image, const std::byte* data, std::size_t size,

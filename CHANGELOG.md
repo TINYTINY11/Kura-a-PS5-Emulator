@@ -8,6 +8,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M2 stage 2 — interpreter depth + SELF/ELF groundwork**
+- Multiply/divide family — one-operand MUL, IMUL, DIV, IDIV at 8/16/32/64-bit widths, full 128-bit support for 64-bit forms (hand-rolled 64×64→128 multiply and restoring 128÷64 division, since MSVC has no `__int128`); new `StopReason::DivideError` stops cleanly on /0 and quotient overflow (`core/cpu`)
+- Shifts and rotates — SHL/SHR/SAR/ROL/ROR in all forms (imm, by-1, CL), architectural count masking, correct carry/overflow for count==1, direction flag now tracked (CLD/STD) (`core/cpu`)
+- ADC/SBB now carry-in correct at every width (was a stub), reachable via the r/m, r · r, r/m · r/m, imm · accumulator forms
+- Conditional moves and sets — CMOVcc (reads its memory operand even when the condition is false, matching real x86 fault semantics) and SETcc (`0F 40-4F` / `0F 90-9F`)
+- Missing high-frequency compiler output: accumulator-immediate ALU forms (`05`/`3D`/… — `cmp eax,imm32` is everywhere), 8-bit immediate group `80`, IMUL-with-immediate (`69`/`6B`), XCHG, NOT/NEG, CLC/STC/CMC
+- REP string ops — MOVS/STOS/LODS (`rep movsq`/`rep stosq` = memset/memcpy in every binary), forward and backward via DF (`core/cpu`)
+- ELF: SCE `e_type` acceptance (`ET_SCE_EXEC 0xFE00` range used inside SELF containers) — community RE confirms these headers are plaintext inside decrypted components (`core/loader`)
+- ELF: `find_embedded_elf` scanner — locates a valid ELF64 at an arbitrary offset inside a blob (fake/foreign magic skipped), for finding inner ELFs inside decrypted firmware components (`core/loader`)
+- Tests: 14 new interpreter cases (carry chains, signed division remainders, high-word multiply, condition codes, rep strings, divide-error paths) + 2 new ELF cases — `unit.cpu` now at 25 checks-heavy programs, 7/7 suites green
+
 **M1 firmware pipeline (stage 1 → 2 groundwork)**
 - Modern PUP entry-table parser — community-documented 48-byte component records (id/offset/sizes/flags), plausibility-checked; readable on decrypted `.PUP.dec` files, reports "not readable" on encrypted containers by design (`kura_pup`)
 - 14 known component IDs mapped to names (eap_kernel, kernel, bios, gpu_ucode, …)

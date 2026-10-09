@@ -27,8 +27,20 @@ struct ElfImage {
 
 // Pure parser — validates magic/class/endian/machine and bounds-checks
 // every field. Returns nullopt for anything that isn't a well-formed
-// little-endian x86-64 ELF64.
+// little-endian x86-64 ELF64 (accepts the SCE e_type extension range
+// 0xFE00-0xFE1F found in SELF containers).
 std::optional<ElfImage> parse_elf64(const std::byte* data, std::size_t size);
+
+// SELF/encrypted-component scanning: community RE shows the inner ELF
+// headers of PS5 components are plaintext inside otherwise-encrypted
+// blobs (ELF found at arbitrary offsets like 0x8D318). Scans for a valid
+// ELF64 starting at `start` and returns its offset + parsed image.
+struct EmbeddedElf {
+    std::size_t offset = 0;
+    ElfImage image;
+};
+std::optional<EmbeddedElf> find_embedded_elf(const std::byte* data, std::size_t size,
+                                             std::size_t start = 0);
 
 // Maps PT_LOAD segments into guest memory and copies file contents.
 // (M2 scope: non-overlapping segments; real-world overlapping PT_LOADs

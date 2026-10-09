@@ -27,6 +27,7 @@ struct CpuState {
     std::uint64_t gpr[16] = {};
     std::uint64_t rip = 0;
     std::uint64_t rflags = kFlagFixed;
+    bool df = false; // direction flag (string ops; false = forward)
 };
 
 enum class StopReason {
@@ -36,6 +37,7 @@ enum class StopReason {
     InvalidOpcode, // decoder hit something we don't implement (yet)
     FetchFault,    // RIP outside mapped guest memory
     DataFault,     // operand address outside mapped guest memory
+    DivideError,   // DIV/IDIV by zero or quotient overflow
     StepLimit,     // max_steps exhausted (running, not an error)
 };
 
@@ -112,11 +114,23 @@ private:
     bool read_rm(const RmOperand& op, int width, std::uint64_t& out);
     bool write_rm(const RmOperand& op, int width, std::uint64_t v);
 
+    // raw little-endian access at a guest address (string ops, rep helpers)
+    bool mem_read(std::uint64_t addr, int bytes, std::uint64_t& out);
+    bool mem_write(std::uint64_t addr, int bytes, std::uint64_t v);
+
     bool eval_cc(unsigned nibble) const;
     void set_zsp(std::uint64_t res, int width);
 
     bool alu_op(unsigned digit, std::uint64_t a, std::uint64_t b, int width,
                 std::uint64_t& result);
+
+    // shift/rotate group (digits: 0 ROL, 1 ROR, 4 SHL, 5 SHR, 7 SAR)
+    void shift_op(int digit, std::uint64_t a, int width, std::uint64_t count,
+                  std::uint64_t& res);
+
+    // F6/F7 group /4-/7: MUL, IMUL, DIV, IDIV (one-operand forms).
+    // false + filled out => stop the run (DivideError or DataFault).
+    bool exec_muldiv(unsigned digit, const RmOperand& rm, int width, RunResult& out);
 
     GuestMemory& mem_;
     CpuState& st_;
