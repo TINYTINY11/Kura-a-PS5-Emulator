@@ -39,7 +39,7 @@ Full breakdown — including the reference dev rig and the PS5 specs being emula
 **Visual Studio 2026 (recommended):**
 
 1. Run `generate-sln.bat` (uses Visual Studio 2026's bundled CMake)
-2. Open `Kura.sln` in Visual Studio 2026
+2. Open `Kura.slnx` (or `Kura.sln`) in Visual Studio 2026
 3. Build (Ctrl+Shift+B) and run the `kura` target
 
 **Command line:**

@@ -13,4 +13,4 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Done — open Kura.sln in Visual Studio 2026.
+echo Done — open Kura.slnx (or Kura.sln) in Visual Studio 2026.
