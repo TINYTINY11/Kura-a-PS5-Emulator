@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M1 firmware pipeline (stage 1 → 2 groundwork)**
+- Modern PUP entry-table parser — community-documented 48-byte component records (id/offset/sizes/flags), plausibility-checked; readable on decrypted `.PUP.dec` files, reports "not readable" on encrypted containers by design (`kura_pup`)
+- 14 known component IDs mapped to names (eap_kernel, kernel, bios, gpu_ucode, …)
+- RE notes massively expanded: full community header layout cross-checked against our empirical table (0x0C = entry count, 0x10 = header size — retroactively explaining stage-1 "unknown" fields), two-layer encryption model (outer SLB2 + inner per-binary SELF AES), inner SELF segment layouts, and the 2025-12 BootROM key-leak situation with Kura's no-keys-in-repo policy (`docs/RE-pup.md`)
+
 **Project**
 - Design documentation — full architecture, subsystem designs, roadmap M0–M7, risk register, legal constraints (`docs/DESIGN.md`)
 - Predicted system requirements — host specs, reference dev rig, guest PS5 specs (`docs/SPEC.md`)
