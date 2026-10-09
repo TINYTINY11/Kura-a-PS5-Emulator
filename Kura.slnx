@@ -9,6 +9,7 @@
 	</Configurations>
 	<Project Path="ALL_BUILD.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="259ccdf6-3721-3e9e-9d04-6458abee792a" DefaultStartup="true">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="frontend/boot/kura_boot.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_boot_tests.vcxproj"/>
 		<BuildDependency Project="frontend/cli/kura_cli.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
@@ -19,6 +20,7 @@
 		<BuildDependency Project="tests/unit/kura_net_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_pup.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_pup_tests.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_settings_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_tests.vcxproj"/>
 		<Build Solution="Debug|*" Project="false"/>
 		<Build Solution="Release|*" Project="false"/>
@@ -33,6 +35,10 @@
 		<Build Solution="RelWithDebInfo|*" Project="false"/>
 	</Project>
 	<Project Path="ZERO_CHECK.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="2820fecf-b09c-3fde-9303-0d1b4b1149d0"/>
+	<Project Path="frontend/boot/kura_boot.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="96694a2b-219a-3d8d-9431-78e928c6b65a">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
 	<Project Path="tests/unit/kura_boot_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="2bd7208f-1e1a-3898-bbb9-49113d216352">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
@@ -73,6 +79,10 @@
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_firmware.vcxproj"/>
+	</Project>
+	<Project Path="tests/unit/kura_settings_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="e531d4e7-c577-375e-b189-c9e860ada734">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
 	</Project>
 	<Project Path="tests/unit/kura_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="3201931d-9887-3ee9-9dda-2cd3b858199c">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>

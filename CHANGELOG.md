@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 1.5 — first-startup experience (emulator UI, not emulated output)**
+- Settings module — tiny dependency-free key=value store per user (`%APPDATA%\Kura\kura.cfg`); remembers firmware path, log level, wizard completion; malformed/unknown lines tolerated (`core/common/settings`)
+- `kura_boot.exe` — the power-on window: frameless Win11-style translucent (DWM acrylic backdrop, rounded corners, dark mode) Win32+GDI GUI with splash fade-in, first-run setup wizard (firmware picker + log level), and a live firmware-pipeline pane streaming `kura_pup` output with an honest verdict line at the encryption wall (`frontend/boot`)
+- Subsequent launches detect saved settings and boot straight to the pipeline (wizard once, then remembered)
+- Fixed on the way: child controls parented before window-handle assignment (invisible UI), black-on-black labels (dark-theme control colors), clipped verdict text
+- Tests: `unit.settings` round-trip + malformed-input coverage — 8/8 suites green
+
 **M2 stage 2 — interpreter depth + SELF/ELF groundwork**
 - Multiply/divide family — one-operand MUL, IMUL, DIV, IDIV at 8/16/32/64-bit widths, full 128-bit support for 64-bit forms (hand-rolled 64×64→128 multiply and restoring 128÷64 division, since MSVC has no `__int128`); new `StopReason::DivideError` stops cleanly on /0 and quotient overflow (`core/cpu`)
 - Shifts and rotates — SHL/SHR/SAR/ROL/ROR in all forms (imm, by-1, CL), architectural count masking, correct carry/overflow for count==1, direction flag now tracked (CLD/STD) (`core/cpu`)
