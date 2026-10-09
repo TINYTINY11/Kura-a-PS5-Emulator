@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 4 — host-bridge Vfs (sandboxed, read-only by construction)**
+- `docs/SYSCALLS.md` — living syscall coverage table (implemented/placeholder/ENOSYS/planned) with the prediction policy and the M3 exit plan per `DESIGN.md`
+- `mount_host(abs_root)` — real host directories back guest paths not in the in-memory store; Kura **never writes host files**: opening for write materializes a private copy first (copy-on-open), so the mounted tree is immutable at the filesystem level (design doc §11)
+- Sandbox core `host_resolve`: `..` rejected at any depth, `:`/`\`/NUL components rejected outright, and the **canonicalized** candidate must keep the canonical root as prefix — so host symlinks inside the tree can't lead out; sandbox rejection maps to `ENOENT` (no information leak)
+- `EISDIR` on directory opens (including `/`), `EFBIG` guard (files >512 MiB are not materialized), `O_CREAT|O_EXCL` still sees host files as existing, store always shadows host
+- `stat` works on unmaterialized host files (size, hashed-stand-in inode, mtime via a portable file-clock→system-clock age conversion — MSVC's file clock lacks `to_sys`); `stat` has no side effects
+- New `unit.hostbridge` suite: read/nested paths, stat-without-open, **host bytes byte-for-byte unchanged after guest write+truncate**, every escape shape rejected with nothing created outside the root, `EISDIR`, store-shadow semantics — 10/10 suites green
+
 **M3 stage 3 — stat family + file metadata**
 - `stat/fstat/lstat` (188/189/190, predicted FreeBSD amd64 numbers); `lstat` == `stat` while the Vfs has no symlinks; `ENOENT` on missing paths, `EBADF` on bad fds
 - `struct stat` writer with a **documented predicted layout** (160 bytes: mode@16, nlink@20, mtim@56, size@104, blocks@112 …) — every offset flagged for verification against real binaries when decryption falls (`docs/RE-pup.md` policy)

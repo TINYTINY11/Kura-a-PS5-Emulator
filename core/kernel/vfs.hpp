@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -71,12 +72,28 @@ public:
     bool stat_path(const std::string& path, StatInfo& out) const;
     bool stat_fd(int fd, StatInfo& out) const;
 
+    // --- host bridge (M3 stage 4) ------------------------------------------
+    // Mounts a real host directory as the backing store for guest paths
+    // that aren't in the in-memory namespace. Safety by construction
+    // (design doc §11):
+    //   * every guest path resolves INSIDE abs_root — "..", ':' and '\\'
+    //     components are rejected, and the canonicalized result must keep
+    //     the canonical root as a prefix (so host symlinks can't lead out)
+    //   * Kura never writes host files: opening for write materializes a
+    //     private copy into the store first (copy-on-open); the host tree
+    //     is read-only at the filesystem level
+    // Returns false if abs_root isn't an existing directory.
+    bool mount_host(const std::string& abs_root);
+    bool host_mounted() const { return !host_root_.empty(); }
+
     // Host-side inspection (tests / debugger): full contents of a file.
     std::optional<std::vector<std::byte>> file_bytes(const std::string& path) const;
     // Bytes written to fd 1/2 since construction.
     const std::string& tty_text() const { return tty_text_; }
 
 private:
+    // Outcome of a host-bridge lookup during open(2).
+    enum class HostResult { Miss, Loaded, IsDir, TooBig, Escape };
     // One stored file. Contents live here (source of truth, keyed by
     // path) — an fd only tracks position and flags, so writes through one
     // fd are visible through the named store and to reopens.
@@ -96,9 +113,16 @@ private:
 
     File* get(int fd);
     StatInfo info_of(const Node& n) const;
+    // Sandbox core: guest path -> absolute path under host_root_, or
+    // false for anything that could escape it.
+    bool host_resolve(const std::string& guest,
+                      std::filesystem::path& out) const;
+    HostResult host_open_into(const std::string& path);
+    bool host_stat(const std::string& path, StatInfo& out) const;
     std::map<std::string, Node> files_; // named store
     std::map<int, File> fds_;           // open descriptors
     std::string tty_text_;
+    std::filesystem::path host_root_; // empty = bridge unmounted
     int next_fd_ = 3;
     std::uint64_t next_ino_ = 1;
 };
