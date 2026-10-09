@@ -138,6 +138,8 @@ kura firmware install /path/to/PS5UPDATE.PUP --keys /path/to/keys
 
 The PUP and extracted tree are never committed, never redistributed, and never required by CI — the emulator only ever reads the local extracted tree (`.gitignore` blocks `*.pup`, `firmware/`, `keys/`).
 
+**Storage budget (hard cap: 20 GB):** repo + build ≈ 1 GB, extracted firmware tree ≈ 5–6 GB, leaving ~13 GB headroom. The pipeline extracts to a temporary directory *inside the budget* and deletes intermediates after install; trace logs and dumps are size-capped. If an operation would exceed 20 GB, it must fail loudly rather than fill the disk.
+
 ### 5.3 Loader (`core/loader/`)
 Responsibilities:
 

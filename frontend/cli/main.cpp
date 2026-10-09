@@ -1,6 +1,7 @@
 #include "common/log.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -29,7 +30,7 @@ void print_usage() {
         "  -v, --version           Show version and exit\n"
         "  --log-level <level>     trace|debug|info|warn|error|off  (default: info)\n"
         "  --log-file <path>       Also write logs to a file\n"
-        "  --firmware <path>       Install firmware from a PS5UPDATE.PUP (M1)\n"
+        "  --firmware <path>       Run the firmware pipeline against a PS5UPDATE.PUP\n"
         "  --check-host <host>     Check a host against the PSN block list\n";
 }
 
@@ -101,9 +102,42 @@ int run(int argc, char** argv) {
     log::debug("boot", "log system ready — channels: boot, loader, kernel.sys, gpu.cmd, net");
 
     if (!firmware_path.empty()) {
-        log::info("firmware", "requested firmware install from: ", firmware_path);
-        log::warn("firmware", "firmware pipeline arrives in M1 — see docs/DESIGN.md §5.2");
-        return 2;
+        // ---- First boot sequence (design doc §5.2) ----
+        namespace fs = std::filesystem;
+
+        log::info("boot", "stage 0: firmware file located — ", firmware_path);
+        std::error_code ec;
+        if (!fs::exists(firmware_path, ec)) {
+            log::error("boot", "stage 0 FAILED — file not found");
+            return 1;
+        }
+        log::info("boot", "stage 0 OK");
+
+        // Locate kura_pup next to kura.exe (the pipeline tool stays a
+        // separate binary — design rule: never linked into the emulator).
+        fs::path tool = fs::path(argv[0]).parent_path() / "kura_pup.exe";
+        if (!fs::exists(tool, ec)) tool = fs::path("kura_pup.exe");
+        log::info("boot", "stage 1: SLB2 header parse via ", tool.filename().string());
+
+        // cmd.exe strips the first+last quote when /c's argument starts with
+        // one — wrap the whole command so paths with spaces survive.
+        const std::string inner = "\"" + tool.string() + "\" \"" + firmware_path + "\"";
+        const std::string cmd = "\"" + inner + "\"";
+        const int rc = std::system(cmd.c_str());
+
+        if (rc == 0) {
+            log::info("boot", "stage 1 OK — payload extractable");
+            log::info("boot", "stage 2: READY — extraction (stage 3) can proceed");
+            return 0;
+        }
+        if (rc == 3) {
+            log::error("boot", "stage 1 OK — but BOOT HALTED at stage 2: payload is encrypted");
+            log::error("boot", "keys required to decrypt — see docs/RE-pup.md and docs/DESIGN.md §5.2/§12");
+            log::info("boot", "after decryption: M2 loader+CPU → M3 kernel → M4 GPU → M5 services → M6 shell");
+            return 4;
+        }
+        log::error("boot", "firmware pipeline failed with code ", rc);
+        return 4;
     }
 
     log::info("boot", "no firmware installed yet — the first-run wizard arrives in M1");

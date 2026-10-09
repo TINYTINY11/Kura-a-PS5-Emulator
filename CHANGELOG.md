@@ -15,6 +15,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - GitHub repository with `.gitignore` that blocks firmware (`*.PUP`), keys, and dumps from ever being committed
 
 **M1 firmware pipeline (stage 1)**
+- First boot sequence: `kura --firmware <PUP>` runs stage-by-stage (locate → parse → decrypt attempt) with a live boot log; halts honestly at the encryption wall with next-step guidance
 - `kura_pup` — standalone SLB2/PUP structure inspector (header parse, size validation, SHA-256-shaped digest dump, Shannon entropy analysis, full-file nested-magic block scan)
 - RE notes documenting the empirical SLB2 v3 header layout and open questions (`docs/RE-pup.md`)
 

@@ -10,7 +10,7 @@ _Status: **predicted** — these are estimates made during planning, not measure
 | VRAM | 6 GB | 6 GB (8 GB+ once game support matures) |
 | CPU | 6 cores | 8 cores / 16 threads |
 | RAM | 16 GB | 16 GB+ |
-| Storage | SSD, ~10 GB free for firmware | NVMe SSD |
+| Storage | SSD, 10 GB free | NVMe SSD — **20 GB total budget for the project** (repo+build ~1 GB, extracted firmware ~6 GB) |
 | OS | **Windows 11 x64** | Windows 11 x64, fully updated |
 | Graphics API | **Vulkan 1.3** (drivers up to date) | — |
 
