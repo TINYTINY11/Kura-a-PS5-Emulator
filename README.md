@@ -4,7 +4,7 @@
 
 ## Status
 
-**M0 (foundations) in progress** — build system, logging/trace core, PSN network filter, CLI, tests, CI. Next: M1 firmware pipeline. Full plan: [docs/DESIGN.md](docs/DESIGN.md).
+**M2 (loader + interpreter) in progress** — guest memory, ELF64 loader, and an x86-64 interpreter that executes guest binaries end-to-end (7/7 tests green). Earlier: M0 foundations, M1 stage 1 (SLB2/PUP parse + first-boot pipeline). Full plan: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Design highlights
 

@@ -9,9 +9,13 @@
 	</Configurations>
 	<Project Path="ALL_BUILD.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="259ccdf6-3721-3e9e-9d04-6458abee792a" DefaultStartup="true">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_boot_tests.vcxproj"/>
 		<BuildDependency Project="frontend/cli/kura_cli.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_cpu_tests.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_elf_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_firmware.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_memory_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_net_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_pup.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_pup_tests.vcxproj"/>
@@ -29,6 +33,10 @@
 		<Build Solution="RelWithDebInfo|*" Project="false"/>
 	</Project>
 	<Project Path="ZERO_CHECK.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="2820fecf-b09c-3fde-9303-0d1b4b1149d0"/>
+	<Project Path="tests/unit/kura_boot_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="2bd7208f-1e1a-3898-bbb9-49113d216352">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
 	<Project Path="frontend/cli/kura_cli.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="7a989dfc-2695-334e-ad1c-8959d2d0179d">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
@@ -36,7 +44,19 @@
 	<Project Path="core/kura_core.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="265bf3cc-8321-3dd2-bce4-3dcd1c5ce703">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 	</Project>
+	<Project Path="tests/unit/kura_cpu_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="9ecc7ea1-d338-332e-b5fd-9192f9428fc8">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
+	<Project Path="tests/unit/kura_elf_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="965afca6-37bd-3c85-a729-0fa868833cad">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
 	<Project Path="tools/firmware/kura_firmware.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="5046019e-548f-370e-88e2-2e693618ccbd">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
+	<Project Path="tests/unit/kura_memory_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="ee77200b-6d62-35f3-a10e-20236a5ede64">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 	</Project>

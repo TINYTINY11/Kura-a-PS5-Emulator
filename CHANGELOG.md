@@ -14,6 +14,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - First boot experience — RPCS3-style `PS5UPDATE.PUP` firmware install flow, documented with translucent Windows 11 UI guidelines
 - GitHub repository with `.gitignore` that blocks firmware (`*.PUP`), keys, and dumps from ever being committed
 
+**M2 loader + interpreter (stage 1)**
+- Guest memory manager — sparse x86-64 address space with bounds-checked, overflow-safe read/write, region overlap rejection (`core/memory`)
+- ELF64 loader — pure, bounds-checked parser (ET_EXEC/ET_DYN, EM_X86_64) + PT_LOAD segment mapping into guest memory (`core/loader`)
+- x86-64 interpreter — decode-and-execute loop over a practical instruction subset (MOV/LEA, ALU groups, Jcc, CALL/RET, PUSH/POP, TEST, MOVZX/MOVSX, SYSCALL) with flag-correct arithmetic and RIP-relative addressing (`core/cpu`)
+- Syscall/exit hooks — guest `exit` (FreeBSD 1 / Linux 60) captured by the host; unhandled syscalls stop the run with context instead of guessing
+- Tests: `unit.memory`, `unit.elf`, `unit.cpu` (hand-assembled guest programs), `unit.boot` — full path test: synthetic ELF → parse → map → execute → guest-computed exit code verified end-to-end
+- Fault behavior: invalid opcode, unmapped fetch/load/store, and step limits all stop cleanly with diagnostics (never crash the host — §11)
+
 **M1 firmware pipeline (stage 1)**
 - First boot sequence: `kura --firmware <PUP>` runs stage-by-stage (locate → parse → decrypt attempt) with a live boot log; halts honestly at the encryption wall with next-step guidance
 - `kura_pup` — standalone SLB2/PUP structure inspector (header parse, size validation, SHA-256-shaped digest dump, Shannon entropy analysis, full-file nested-magic block scan)
