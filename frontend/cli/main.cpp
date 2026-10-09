@@ -5,6 +5,11 @@
 #include <string>
 #include <string_view>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include "io/net_filter.hpp"
 
 #ifndef KURA_VERSION_STRING
@@ -28,9 +33,19 @@ void print_usage() {
         "  --check-host <host>     Check a host against the PSN block list\n";
 }
 
-} // namespace
+// True when the console was created *for* us (double-click / Explorer) —
+// i.e. our process is the only one attached, so the window would flash
+// closed on exit. In that case we pause so the output stays visible.
+bool launched_by_double_click() {
+#ifdef _WIN32
+    DWORD pids[2] = {0, 0};
+    return GetConsoleProcessList(pids, 2) == 1;
+#else
+    return false;
+#endif
+}
 
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     using namespace kura;
 
     std::string firmware_path;
@@ -94,4 +109,16 @@ int main(int argc, char** argv) {
     log::info("boot", "no firmware installed yet — the first-run wizard arrives in M1");
     log::info("boot", "run with --help for usage");
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const bool pause_on_exit = launched_by_double_click();
+    const int rc = run(argc, argv);
+    if (pause_on_exit) {
+        std::cout << "\nPress Enter to exit..." << std::endl;
+        (void)std::cin.get();
+    }
+    return rc;
 }
