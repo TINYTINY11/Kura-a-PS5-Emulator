@@ -259,7 +259,7 @@ Key decisions:
 ### 5.10 Filesystem, input, network (`core/io/`)
 - **FS:** host-directory sandbox mirroring the firmware tree + writable save locations; path translation layer handles the guest's absolute layout (`/app0`, `/system`, …).
 - **Input:** host gamepad → emulated DualSense/DualShock4 state structure (connection + report), delivered through the pad HLE event queue.
-- **Network:** stub `sceNet`/`sceHttp` with correct error codes; no packets until post-shell.
+- **Network:** stub `sceNet`/`sceHttp` with correct error codes; no packets until post-shell. **PSN hard block:** every outbound host is checked against a Sony/PSN domain block list (`core/io/net_filter`), deny-by-default — neither Kura nor emulated software ever contacts PlayStation Network servers.
 
 ### 5.11 Debugger & tooling (`core/debug/`) — built in, not bolted on
 - **Trace channels**: `cpu.sys`, `cpu.insn` (windowed), `gpu.cmd`, `gpu.shader`, `kernel.sys`, `kernel.sync`, `loader`, `audio`.

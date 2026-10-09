@@ -23,6 +23,21 @@ CMakeUserPresets.json
 *.exe
 *.pdb
 
+# --- CMake / Visual Studio generated (solution generated at repo root) ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+bin/
+x64/
+Debug/
+Release/
+
 # --- Dependencies / package managers ---
 vcpkg_installed/
 .conan/

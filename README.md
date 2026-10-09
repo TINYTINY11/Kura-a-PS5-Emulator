@@ -4,7 +4,7 @@
 
 ## Status
 
-Early planning / pre-alpha. See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture, roadmap (M0–M7), and design decisions.
+**M0 (foundations) in progress** — build system, logging/trace core, PSN network filter, CLI, tests, CI. Next: M1 firmware pipeline. Full plan: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Design highlights
 
@@ -36,7 +36,19 @@ Full breakdown — including the reference dev rig and the PS5 specs being emula
 
 ## Building
 
-_Not yet — M0 (repo scaffolding, CI, tracing) is the first milestone._
+**Visual Studio 2026 (recommended):**
+
+1. Run `generate-sln.bat` (uses Visual Studio 2026's bundled CMake)
+2. Open `Kura.sln` in Visual Studio 2026
+3. Build (Ctrl+Shift+B) and run the `kura` target
+
+**Command line:**
+
+```bash
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
 
 ## Legal
 
@@ -46,4 +58,4 @@ _Not yet — M0 (repo scaffolding, CI, tracing) is the first milestone._
 
 ## License
 
-TBD — decide before the first public push.
+TBD — will be added before the first release.
