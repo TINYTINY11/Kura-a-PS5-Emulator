@@ -14,6 +14,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - First boot experience — RPCS3-style `PS5UPDATE.PUP` firmware install flow, documented with translucent Windows 11 UI guidelines
 - GitHub repository with `.gitignore` that blocks firmware (`*.PUP`), keys, and dumps from ever being committed
 
+**M1 firmware pipeline (stage 1)**
+- `kura_pup` — standalone SLB2/PUP structure inspector (header parse, size validation, SHA-256-shaped digest dump, Shannon entropy analysis, full-file nested-magic block scan)
+- RE notes documenting the empirical SLB2 v3 header layout and open questions (`docs/RE-pup.md`)
+
 **M0 foundations (code)**
 - CMake build system (C++20) with Visual Studio 2026 solution generator (`generate-sln.bat`)
 - Logging/trace system — leveled (trace→error) and channel-based, with console (colored), file, and custom sinks (`core/common/log`)

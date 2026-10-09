@@ -18,6 +18,7 @@ endif()
 
 add_subdirectory(core)
 add_subdirectory(frontend/cli)
+add_subdirectory(tools)
 
 if(KURA_BUILD_TESTS)
   enable_testing()
