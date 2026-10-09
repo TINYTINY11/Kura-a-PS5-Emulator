@@ -357,6 +357,73 @@ void test_sysctl() {
     CHECK(call(k, st) == -sys::kEPERM);
 }
 
+void test_stat_family() {
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kScratch, 0x1000));
+    write_cstr(mem, kScratch, "/data/statme.txt");
+    CHECK(mem.write(kScratch + 0x100, "abc", 3));
+
+    // create + write through the syscall interface
+    auto st = st_for(sys::kOpen, kScratch,
+                     kura::kernel::kOCreat | kura::kernel::kOWrite);
+    const std::int64_t fd = call(k, st);
+    CHECK(fd >= 3);
+    st = st_for(sys::kWrite, static_cast<std::uint64_t>(fd),
+                kScratch + 0x100, 3);
+    CHECK(call(k, st) == 3);
+
+    // stat(path, buf) — offsets below lock the PREDICTED struct layout
+    st = st_for(sys::kStat, kScratch, kScratch + 0x200);
+    CHECK(call(k, st) == 0);
+    std::uint64_t ino = 0, size = 0, blocks = 0, mtime = 0;
+    std::uint32_t mode = 0, nlink = 0;
+    CHECK(mem.read_value(kScratch + 0x200 + 8, ino));
+    CHECK(mem.read_value(kScratch + 0x200 + 16, mode));
+    CHECK(mem.read_value(kScratch + 0x200 + 20, nlink));
+    CHECK(mem.read_value(kScratch + 0x200 + 56, mtime)); // mtim.tv_sec
+    CHECK(mem.read_value(kScratch + 0x200 + 104, size));
+    CHECK(mem.read_value(kScratch + 0x200 + 112, blocks));
+    CHECK((mode & 0xF000) == kura::kernel::kS_IFREG);
+    CHECK((mode & 0777) == 0644);
+    CHECK(nlink == 1);
+    CHECK(size == 3);
+    CHECK(blocks == 1); // one 512-byte block
+    CHECK(ino > 0);
+    CHECK(mtime > 1'700'000'000); // stamped at write time
+
+    // lstat: no symlinks in this Vfs, behaves like stat
+    st = st_for(sys::kLstat, kScratch, kScratch + 0x300);
+    CHECK(call(k, st) == 0);
+
+    // missing path -> ENOENT
+    write_cstr(mem, kScratch + 0x60, "/data/absent.txt");
+    st = st_for(sys::kStat, kScratch + 0x60, kScratch + 0x300);
+    CHECK(call(k, st) == -sys::kENOENT);
+
+    // fstat on the regular fd -> same type/size story
+    st = st_for(sys::kFstat, static_cast<std::uint64_t>(fd),
+                kScratch + 0x400);
+    CHECK(call(k, st) == 0);
+    std::uint32_t fmode = 0;
+    std::uint64_t fsize = 0;
+    CHECK(mem.read_value(kScratch + 0x400 + 16, fmode));
+    CHECK(mem.read_value(kScratch + 0x400 + 104, fsize));
+    CHECK((fmode & 0xF000) == kura::kernel::kS_IFREG);
+    CHECK(fsize == 3);
+
+    // fstat on stdout -> character device with rw-rw-rw- predicted
+    st = st_for(sys::kFstat, 1, kScratch + 0x500);
+    CHECK(call(k, st) == 0);
+    CHECK(mem.read_value(kScratch + 0x500 + 16, fmode));
+    CHECK((fmode & 0xF000) == kura::kernel::kS_IFCHR);
+    CHECK((fmode & 0777) == 0666);
+
+    // fstat on an invalid fd -> EBADF
+    st = st_for(sys::kFstat, 999, kScratch + 0x600);
+    CHECK(call(k, st) == -sys::kEBADF);
+}
+
 } // namespace
 
 int main() {
@@ -369,6 +436,7 @@ int main() {
     test_clock_gettime_and_nanosleep();
     test_ioctl_enotty();
     test_sysctl();
+    test_stat_family();
     test_guest_program_syscalls_end_to_end();
     if (g_failures == 0) std::cout << "test_kernel: all checks passed\n";
     return g_failures == 0 ? 0 : 1;

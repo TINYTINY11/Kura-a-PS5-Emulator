@@ -44,6 +44,11 @@ inline constexpr std::uint64_t kGetegid = 27;
 inline constexpr std::uint64_t kGetppid = 114;   // getppid()
 inline constexpr std::uint64_t kClockGettime = 232; // clock_gettime(id, ts)
 
+// --- added in M3 stage 3 ----------------------------------------------------
+inline constexpr std::uint64_t kStat = 188;   // stat(path, buf)
+inline constexpr std::uint64_t kFstat = 189;  // fstat(fd, buf)
+inline constexpr std::uint64_t kLstat = 190;  // lstat(path, buf) — no symlinks
+
 // Commonly reached but not yet implemented — these return -kENOSYS, which
 // real binaries treat as "feature absent" and route around.
 inline constexpr std::uint64_t kMprotect = 74;

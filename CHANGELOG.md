@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 3 — stat family + file metadata**
+- `stat/fstat/lstat` (188/189/190, predicted FreeBSD amd64 numbers); `lstat` == `stat` while the Vfs has no symlinks; `ENOENT` on missing paths, `EBADF` on bad fds
+- `struct stat` writer with a **documented predicted layout** (160 bytes: mode@16, nlink@20, mtim@56, size@104, blocks@112 …) — every offset flagged for verification against real binaries when decryption falls (`docs/RE-pup.md` policy)
+- Vfs nodes now carry metadata: stable inode numbers allocated on create, mtime stamped at create/truncate/write, default mode `0644`; `/dev/*` fds stat as character devices with predicted `0666`
+- `st_blocks` in 512-byte units, `st_blksize` 4096, `st_nlink` 1, uid/gid 0 (matching the root-placeholder identity syscalls); all four timestamps carry mtime until atime/ctime granularity arrives with the host-bridge Vfs
+- `unit.kernel`: stat offsets/type/mode/mtime/size/blocks locked down, lstat, ENOENT, fstat on file + stdout-as-chardev + EBADF — 9/9 suites green
+
 **M3 stage 2 — syscall depth (identity, clock, sleep, sysctl) + exit-routing fix**
 - `clock_gettime` (232, predicted) with FreeBSD amd64 `timespec`: `CLOCK_REALTIME` from the host wall clock, `CLOCK_MONOTONIC` (id 4) since guest boot, `EINVAL` otherwise
 - `nanosleep` (60) — reads the guest `timespec`, really sleeps (clamped to 250 ms so a mis-set guest timer can never freeze the window; documented deviation)

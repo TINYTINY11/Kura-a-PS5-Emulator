@@ -1,12 +1,23 @@
 #include "kernel/vfs.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <string_view>
 
 #include "common/log.hpp"
 #include "kernel/syscalls.hpp"
 
 namespace kura::kernel {
+
+namespace {
+void stamp(std::int64_t& sec, std::int32_t& nsec) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    nsec = static_cast<std::int32_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() -
+        sec * 1000000000);
+}
+} // namespace
 
 Vfs::Vfs() {
     File in;
@@ -40,16 +51,22 @@ int Vfs::open(const std::string& path, std::uint32_t oflags) {
     auto it = files_.find(path);
     if (it != files_.end()) {
         if (creat && excl) return -sys::kEEXIST;
-        if (acc_wr && (oflags & kOTrunc)) it->second.clear();
+        if (acc_wr && (oflags & kOTrunc)) {
+            it->second.data.clear();
+            stamp(it->second.mtime_sec, it->second.mtime_nsec);
+        }
     } else {
         if (!creat) return -sys::kENOENT;
-        it = files_.emplace(path, std::vector<std::byte>{}).first;
+        Node n;
+        n.ino = next_ino_++;
+        stamp(n.mtime_sec, n.mtime_nsec);
+        it = files_.emplace(path, std::move(n)).first;
     }
 
     File f;
     f.path = path;
     f.flags = oflags;
-    f.pos = ((oflags & kOAppend) != 0) ? it->second.size() : 0;
+    f.pos = ((oflags & kOAppend) != 0) ? it->second.data.size() : 0;
     const int fd = next_fd_++;
     fds_[fd] = std::move(f);
     return fd;
@@ -69,7 +86,7 @@ std::int64_t Vfs::read(int fd, GuestMemory& mem, std::uint64_t buf, std::uint64_
 
     auto it = files_.find(f->path);
     if (it == files_.end()) return 0; // empty backing store (e.g. /dev/stdin)
-    auto& data = it->second;
+    auto& data = it->second.data;
 
     const std::uint64_t avail =
         (f->pos < data.size()) ? data.size() - f->pos : 0;
@@ -100,11 +117,12 @@ std::int64_t Vfs::write(int fd, GuestMemory& mem, std::uint64_t buf, std::uint64
 
     auto it = files_.find(f->path);
     if (it == files_.end()) return -sys::kEBADF; // no backing store
-    auto& data = it->second;
+    auto& data = it->second.data;
     if (f->pos + len > data.size()) data.resize(f->pos + len);
     std::copy(tmp.begin(), tmp.end(),
               data.begin() + static_cast<std::ptrdiff_t>(f->pos));
     f->pos += len;
+    stamp(it->second.mtime_sec, it->second.mtime_nsec);
     return static_cast<std::int64_t>(len);
 }
 
@@ -121,7 +139,7 @@ std::int64_t Vfs::lseek(int fd, std::int64_t offset, int whence) {
             auto it = files_.find(f->path);
             base = (it == files_.end())
                        ? 0
-                       : static_cast<std::int64_t>(it->second.size());
+                       : static_cast<std::int64_t>(it->second.data.size());
             break;
         }
         default: return -sys::kEINVAL;
@@ -132,10 +150,43 @@ std::int64_t Vfs::lseek(int fd, std::int64_t offset, int whence) {
     return target;
 }
 
+Vfs::StatInfo Vfs::info_of(const Node& n) const {
+    StatInfo si;
+    si.ino = n.ino;
+    si.size = n.data.size();
+    si.mtime_sec = n.mtime_sec;
+    si.mtime_nsec = n.mtime_nsec;
+    si.mode_perm = 0644; // predicted default: regular file, rw-r--r--
+    return si;
+}
+
+bool Vfs::stat_path(const std::string& path, StatInfo& out) const {
+    auto it = files_.find(path);
+    if (it == files_.end()) return false;
+    out = info_of(it->second);
+    return true;
+}
+
+bool Vfs::stat_fd(int fd, StatInfo& out) const {
+    auto it = fds_.find(fd);
+    if (it == fds_.end()) return false;
+    const File& f = it->second;
+    if (f.path.rfind("/dev/", 0) == 0) { // stdin/stdout/stderr are char devs
+        out = StatInfo{};
+        out.is_char = true;
+        out.mode_perm = 0666; // rw-rw-rw- — predicted
+        return true;
+    }
+    auto n = files_.find(f.path);
+    if (n == files_.end()) return false;
+    out = info_of(n->second);
+    return true;
+}
+
 std::optional<std::vector<std::byte>> Vfs::file_bytes(const std::string& path) const {
     auto it = files_.find(path);
     if (it == files_.end()) return std::nullopt;
-    return it->second;
+    return it->second.data;
 }
 
 } // namespace kura::kernel

@@ -31,6 +31,9 @@ const char* sys::name(std::uint64_t nr) {
         case kGetegid: return "getegid";
         case kGetppid: return "getppid";
         case kClockGettime: return "clock_gettime";
+        case kStat: return "stat";
+        case kFstat: return "fstat";
+        case kLstat: return "lstat";
         default: return "unknown";
     }
 }
@@ -53,6 +56,50 @@ std::uint64_t arg(const cpu::CpuState& st, int i) {
     static constexpr int kOrder[] = {cpu::RDI, cpu::RSI, cpu::RDX, cpu::R10,
                                      cpu::R8, cpu::R9};
     return st.gpr[kOrder[i % 6]];
+}
+
+// struct stat for FreeBSD amd64 — PREDICTED layout, 160 bytes total:
+//   dev 0, ino 8, mode 16, nlink 20, uid 24, gid 28, rdev 32,
+//   atim 40, mtim 56, ctim 72, birthtim 88 (each timespec 16 bytes),
+//   size 104, blocks 112, blksize 120, flags 124, gen 128
+// Type sizes assumed: dev/ino/off/blkcnt 8, mode/nlink/uid/gid/blksize/
+// flags 4. Every offset gets a verification pass against real binaries
+// when the decryption wall falls (docs/RE-pup.md).
+constexpr std::uint64_t kStatSize = 160;
+
+bool write_stat(GuestMemory& mem, std::uint64_t at,
+                const Vfs::StatInfo& si) {
+    std::uint8_t b[kStatSize] = {};
+    const auto put64 = [&](int off, std::uint64_t v) {
+        for (int i = 0; i < 8; ++i)
+            b[off + i] = static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF);
+    };
+    const auto put32 = [&](int off, std::uint32_t v) {
+        for (int i = 0; i < 4; ++i)
+            b[off + i] = static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF);
+    };
+
+    const std::uint32_t type =
+        si.is_char ? kS_IFCHR : (si.is_dir ? kS_IFDIR : kS_IFREG);
+    put64(8, si.ino);
+    put32(16, type | (si.mode_perm & 0777));
+    put32(20, 1); // nlink — the flat store has no hard links
+    // uid/gid stay 0 (matches the root-placeholder identity syscalls)
+    // All four timestamps carry mtime — Vfs tracks one moment per file;
+    // atime/ctime/birthtim granularity arrives with the host-bridge Vfs.
+    put64(40, static_cast<std::uint64_t>(si.mtime_sec));
+    put64(48, static_cast<std::uint64_t>(si.mtime_nsec));
+    put64(56, static_cast<std::uint64_t>(si.mtime_sec));
+    put64(64, static_cast<std::uint64_t>(si.mtime_nsec));
+    put64(72, static_cast<std::uint64_t>(si.mtime_sec));
+    put64(80, static_cast<std::uint64_t>(si.mtime_nsec));
+    put64(88, static_cast<std::uint64_t>(si.mtime_sec));
+    put64(96, static_cast<std::uint64_t>(si.mtime_nsec));
+    put64(104, si.size);
+    put64(112, (si.size + 511) / 512); // st_blocks in 512-byte units
+    put32(120, 4096);                  // st_blksize
+    put32(124, 0);                     // st_flags — fflags unimplemented
+    return mem.write(at, b, sizeof(b));
 }
 
 } // namespace
@@ -292,6 +339,24 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
         // binaries — isatty()-style probes treat ENOTTY cleanly.
         if (!vfs_.has_fd(static_cast<int>(a0))) return -kEBADF;
         return -kENOTTY;
+
+    case kStat:
+    case kLstat: {
+        // The stage-3 Vfs has no symlinks, so lstat == stat for it.
+        std::string path;
+        if (!read_path(a0, path)) return -kEFAULT;
+        Vfs::StatInfo si;
+        if (!vfs_.stat_path(path, si)) return -kENOENT;
+        if (!write_stat(mem_, a1, si)) return -kEFAULT;
+        return 0;
+    }
+
+    case kFstat: {
+        Vfs::StatInfo si;
+        if (!vfs_.stat_fd(static_cast<int>(a0), si)) return -kEBADF;
+        if (!write_stat(mem_, a1, si)) return -kEFAULT;
+        return 0;
+    }
 
     case kSysctl: {
         // sysctl(2), FreeBSD amd64: int *name, u_int namelen, void *oldp,
