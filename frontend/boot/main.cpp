@@ -2,8 +2,10 @@
 //
 // This is the *emulator's* power-on UI — the frame real firmware will one
 // day boot inside of. It is not emulated output and never pretends to be:
-// the pages show Kura's own setup wizard and the honest firmware-pipeline
-// status (including the encryption wall). Win32 + GDI only, no deps.
+// splash → setup wizard → a staged boot checklist (power on, firmware
+// located, SLB2 parsed, decryption attempt) that ends honestly at the
+// encryption wall, with the raw pipeline log behind "Show details".
+// Win32 + GDI only, no deps.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -19,6 +21,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
 
@@ -42,7 +45,7 @@ enum ControlId {
     IDC_WIZARD = 1004,
     IDC_LOGLEVEL = 1005,
     IDC_OUT = 1006,
-    IDC_VERDICT = 1007,
+    IDC_DETAILS = 1007,
 };
 
 constexpr UINT kWmLine = WM_APP + 1;
@@ -55,8 +58,8 @@ HWND g_hwnd = nullptr;
 HWND g_wizTitle = nullptr, g_wizHint = nullptr, g_pathLabel = nullptr,
      g_path = nullptr, g_browse = nullptr, g_boot = nullptr,
      g_logLabel = nullptr, g_log = nullptr;
-HWND g_bootTitle = nullptr, g_out = nullptr, g_verdict = nullptr,
-     g_again = nullptr;
+HWND g_bootTitle = nullptr, g_out = nullptr, g_again = nullptr,
+     g_details = nullptr;
 
 Page g_page = Page::Splash;
 ULONGLONG g_splash_t0 = 0;
@@ -64,7 +67,13 @@ HFONT g_font_logo = nullptr, g_font_title = nullptr, g_font_body = nullptr,
       g_font_small = nullptr;
 kura::settings::Settings g_settings;
 std::atomic<bool> g_busy{false};
-std::string g_verdict_text = "Waiting…";
+
+// Boot-sequence machine: staged checklist drawn over the animation.
+ULONGLONG g_boot_t0 = 0;   // when the boot page started
+int g_stage = 0;           // checklist stage reached (0..3)
+int g_worker_rc = -2;      // -2 not started, -1 running, else exit code
+bool g_detail_open = false;
+std::wstring g_fw_info;    // "PS5UPDATE.PUP — 1203 MiB" for the checklist
 
 // ------------------------------------------------------------- helpers ------
 std::wstring widen(const std::string& s) {
@@ -116,8 +125,6 @@ std::wstring exe_dir() {
     return (slash == std::wstring::npos) ? p : p.substr(0, slash);
 }
 
-void set_text(HWND h, const wchar_t* t) { SetWindowTextW(h, t); }
-
 // ------------------------------------------------------------ layout --------
 void layout() {
     const int pad = 32;
@@ -135,9 +142,9 @@ void layout() {
 
     const bool boot = g_page == Page::Boot;
     show(g_bootTitle, boot);
-    show(g_out, boot);
-    show(g_verdict, boot);
+    show(g_out, boot && g_detail_open);
     show(g_again, boot);
+    show(g_details, boot);
 
     if (wiz) {
         int y = 150;
@@ -157,15 +164,13 @@ void layout() {
         SetWindowPos(g_boot, nullptr, pad, y, 180, 34, SWP_NOZORDER);
     }
     if (boot) {
-        int y = 40;
-        SetWindowPos(g_bootTitle, nullptr, pad, y, 600, 40, SWP_NOZORDER);
-        y += 52;
-        SetWindowPos(g_out, nullptr, pad, y, kWinW - 2 * pad, kWinH - y - 130,
-                     SWP_NOZORDER);
-        y = kWinH - 106;
-        SetWindowPos(g_verdict, nullptr, pad, y, kWinW - 2 * pad, 28, SWP_NOZORDER);
-        y += 34;
-        SetWindowPos(g_again, nullptr, pad, y, 180, 30, SWP_NOZORDER);
+        SetWindowPos(g_bootTitle, nullptr, pad, 36, 600, 40, SWP_NOZORDER);
+        const int btnY = kWinH - 64;
+        SetWindowPos(g_details, nullptr, pad, btnY, 150, 30, SWP_NOZORDER);
+        SetWindowPos(g_again, nullptr, pad + 170, btnY, 180, 30, SWP_NOZORDER);
+        if (g_detail_open)
+            SetWindowPos(g_out, nullptr, pad, 344, kWinW - 2 * pad,
+                         btnY - 24 - 344, SWP_NOZORDER);
     }
     InvalidateRect(g_hwnd, nullptr, TRUE);
 }
@@ -182,8 +187,14 @@ void append_line(const std::string& utf8) {
 void start_worker() {
     if (g_busy.exchange(true)) return;
     SendMessageW(g_out, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L""));
-    g_verdict_text = "Inspecting firmware…";
-    set_text(g_verdict, L"Inspecting firmware…");
+
+    // Reset the checklist machine.
+    g_stage = 0;
+    g_worker_rc = -1;
+    g_detail_open = false;
+    g_boot_t0 = GetTickCount64();
+    EnableWindow(g_again, FALSE);
+    SetWindowTextW(g_details, L"Show details");
 
     const std::wstring tool = L"\"" + exe_dir() + L"\\kura_pup.exe\"";
     std::wstring path = L"";
@@ -194,10 +205,25 @@ void start_worker() {
         buf.resize(static_cast<std::size_t>(n));
         path = buf;
     }
+
+    // Human-readable firmware identity for stage 1 of the checklist.
+    {
+        const auto slash = path.find_last_of(L"\\/");
+        const std::wstring name = (slash == std::wstring::npos)
+                                      ? path
+                                      : path.substr(slash + 1);
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(path, ec);
+        g_fw_info = name;
+        if (!ec) g_fw_info += L" \x2014 " + std::to_wstring(sz >> 20) + L" MiB";
+    }
+
     // cmd.exe strips the outer quotes when /c's argument starts with one —
     // wrap the whole command, same trick as the CLI.
     const std::wstring inner = tool + L" \"" + path + L"\"";
     const std::wstring cmd = L"\"" + inner + L"\"";
+
+    SetTimer(g_hwnd, 2, 120, nullptr); // drives the checklist
 
     std::thread([cmd] {
         FILE* f = _wpopen(cmd.c_str(), L"r");
@@ -259,6 +285,128 @@ void paint(HDC dc) {
         LineTo(dc, kWinW / 2 - 120 + static_cast<int>(240 * a), kWinH / 2 + 48);
         SelectObject(dc, oldpen);
         DeleteObject(pen);
+
+        SelectObject(dc, old);
+    }
+
+    if (g_page == Page::Boot) {
+        const int pad = 32;
+        const bool ok2 = g_worker_rc == 0 || g_worker_rc == 3;
+
+        const COLORREF c_ok = RGB(0x88, 0xD0, 0x88);
+        const COLORREF c_run = RGB(0xD8, 0xB0, 0x58);
+        const COLORREF c_fail = RGB(0xE0, 0x78, 0x78);
+        const COLORREF c_wait = RGB(0x56, 0x56, 0x5E);
+
+        struct Row {
+            const wchar_t* tag;
+            std::wstring text;
+            COLORREF color;
+        };
+        const auto final_row = [&](int i) -> Row {
+            switch (i) {
+            case 0:
+                return {L"[ OK ]", L"Power on \x2014 Kura core initialized", c_ok};
+            case 1:
+                return {L"[ OK ]", L"Firmware located \x2014 " + g_fw_info, c_ok};
+            case 2:
+                return ok2 ? Row{L"[ OK ]",
+                                 L"SLB2 structure parsed \x2014 header, digest, "
+                                 L"entropy scan",
+                                 c_ok}
+                           : Row{L"[FAIL]", L"SLB2 structure parse failed", c_fail};
+            default:
+                if (g_worker_rc == 3)
+                    return {L"[HALT]",
+                            L"System software decryption \x2014 keys not available",
+                            c_run};
+                if (g_worker_rc == 0)
+                    return {L"[ OK ]", L"System software structure verified", c_ok};
+                return {L"[FAIL]", L"Firmware inspection failed", c_fail};
+            }
+        };
+
+        HFONT old = static_cast<HFONT>(SelectObject(dc, g_font_body));
+        const int y0 = 112, step = 34;
+        for (int i = 0; i <= 3; ++i) {
+            Row r = final_row(i);
+            if (i > g_stage) {
+                r.color = c_wait; // future stage: dim
+            } else if (i == g_stage && i < 3) {
+                r.tag = L"[ .. ]"; // in progress
+                r.color = c_run;
+            }
+            SetTextColor(dc, r.color);
+            TextOutW(dc, pad, y0 + i * step, r.tag, 6);
+            SetTextColor(dc, i > g_stage ? c_wait : RGB(0xD8, 0xD8, 0xDC));
+            TextOutW(dc, pad + 88, y0 + i * step, r.text.c_str(),
+                     static_cast<int>(r.text.size()));
+        }
+
+        // progress bar under the checklist (marquee while running)
+        const int barY = y0 + 4 * step + 4;
+        RECT bar{pad, barY, kWinW - pad, barY + 5};
+        HBRUSH track = CreateSolidBrush(RGB(0x26, 0x26, 0x2E));
+        FillRect(dc, &bar, track);
+        DeleteObject(track);
+        {
+            const int w = kWinW - 2 * pad;
+            RECT seg = bar;
+            if (g_stage >= 3) {
+                seg.right = seg.left + w;
+            } else {
+                const int sw = 130;
+                const int off =
+                    static_cast<int>((GetTickCount64() / 8) % (w + sw)) - sw;
+                seg.left += off;
+                seg.right = seg.left + sw;
+                if (seg.left < bar.left) seg.left = bar.left;
+                if (seg.right > bar.left + w) seg.right = bar.left + w;
+            }
+            if (seg.right > seg.left) {
+                const COLORREF fill = g_stage >= 3
+                                          ? (g_worker_rc == 3 ? c_run
+                                             : g_worker_rc == 0 ? c_ok
+                                                                : c_fail)
+                                          : RGB(0xC8, 0xC8, 0xD0);
+                HBRUSH sb = CreateSolidBrush(fill);
+                FillRect(dc, &seg, sb);
+                DeleteObject(sb);
+            }
+        }
+
+        // running hint under the title, then the verdict once halted
+        SetTextColor(dc, g_stage >= 3 ? c_wait : c_run);
+        const wchar_t* hint = g_stage >= 3 ? L"" : L"Starting system\x2026";
+        TextOutW(dc, pad, 84, hint, static_cast<int>(wcslen(hint)));
+
+        if (g_stage >= 3) {
+            SetTextColor(dc, g_worker_rc == 3   ? c_run
+                                 : g_worker_rc == 0 ? c_ok
+                                                    : c_fail);
+            const wchar_t* v =
+                g_worker_rc == 3
+                    ? L"System halted at the encryption wall \x2014 keys not "
+                      L"publicly available (docs/RE-pup.md)."
+                    : g_worker_rc == 0
+                          ? L"Firmware structure verified \x2014 next: "
+                            L"decryption (blocked until keys exist)."
+                          : L"Boot stopped \x2014 firmware inspection failed. "
+                            L"Use Show details for the log.";
+            TextOutW(dc, pad, barY + 24, v, static_cast<int>(wcslen(v)));
+
+            // closing note so the halted screen ends with substance
+            SelectObject(dc, g_font_small);
+            SetTextColor(dc, RGB(0x9A, 0x9A, 0xA6));
+            const wchar_t* n1 =
+                L"Real PS5 firmware resumes here once decryption keys become "
+                L"publicly available \x2014 see docs/RE-pup.md.";
+            const wchar_t* n2 =
+                L"Until then Kura keeps building the core offline \x2014 PSN "
+                L"stays blocked and nothing leaves this PC.";
+            TextOutW(dc, pad, barY + 58, n1, static_cast<int>(wcslen(n1)));
+            TextOutW(dc, pad, barY + 80, n2, static_cast<int>(wcslen(n2)));
+        }
 
         SelectObject(dc, old);
     }
@@ -340,8 +488,10 @@ void create_controls() {
     g_out = make_child(L"Edit", L"", WS_EX_CLIENTEDGE,
                        ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
                        IDC_OUT);
-    g_verdict = make_child(L"Static", L"Waiting…", 0, 0, IDC_VERDICT);
+    g_details = make_child(L"Button", L"Show details", 0, BS_PUSHBUTTON,
+                           IDC_DETAILS);
     g_again = make_child(L"Button", L"Run setup again", 0, BS_PUSHBUTTON, IDC_WIZARD);
+    EnableWindow(g_again, FALSE); // re-enabled when the checklist finishes
 }
 
 // ---------------------------------------------------------------- procs -----
@@ -357,6 +507,24 @@ LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER: {
+        if (wp == 2) {
+            // Boot checklist driver: stages appear with a little ceremony,
+            // the final stage waits for the real pipeline result.
+            const bool done = g_worker_rc != -2 && g_worker_rc != -1;
+            const ULONGLONG t = GetTickCount64() - g_boot_t0;
+            int target = 0;
+            if (t >= 600) target = 1;
+            if (done && t >= 1300) target = 2;
+            if (done && t >= 1900) target = 3;
+            if (target > g_stage) g_stage = target;
+            if (g_stage >= 3) {
+                KillTimer(w, 2);
+                EnableWindow(g_again, TRUE);
+            }
+            InvalidateRect(w, nullptr, FALSE);
+            return 0;
+        }
+
         const double t = static_cast<double>(GetTickCount64() - g_splash_t0) / 1400.0;
         InvalidateRect(w, nullptr, FALSE);
         if (t >= 1.0) {
@@ -413,6 +581,13 @@ LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
             start_worker();
             return 0;
         }
+        if (id == IDC_DETAILS) {
+            g_detail_open = !g_detail_open;
+            SetWindowTextW(g_details,
+                           g_detail_open ? L"Hide details" : L"Show details");
+            layout();
+            return 0;
+        }
         if (id == IDC_WIZARD) {
             if (!g_busy.load()) goto_wizard();
             return 0;
@@ -425,24 +600,12 @@ LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         std::free(reinterpret_cast<void*>(lp));
         return 0;
 
-    case kWmDone: {
+    case kWmDone:
+        // The checklist machine (timer id 2) reads this and finishes the
+        // final stage — verdict is drawn, not set on a control.
+        g_worker_rc = static_cast<int>(wp);
         g_busy.store(false);
-        const int rc = static_cast<int>(wp);
-        if (rc == 0) {
-            g_verdict_text = "Firmware structure OK - extraction stage can proceed.";
-            set_text(g_verdict, L"Firmware structure OK \x2014 extraction stage can proceed.");
-        } else if (rc == 3) {
-            g_verdict_text =
-                "Halted at the encryption wall: keys required (docs/RE-pup.md).";
-            set_text(g_verdict,
-                     L"Halted at the encryption wall: keys required (docs/RE-pup.md). "
-                     L"Real PS5 boot resumes at M3\x2013M6.");
-        } else {
-            g_verdict_text = "Firmware inspection failed (see log above).";
-            set_text(g_verdict, L"Firmware inspection failed (see log above).");
-        }
         return 0;
-    }
 
     case WM_CTLCOLORSTATIC: {
         // Labels sit on our dark background — control defaults would be

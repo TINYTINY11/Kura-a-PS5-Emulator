@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 **M3 stage 1.5 — first-startup experience (emulator UI, not emulated output)**
 - Settings module — tiny dependency-free key=value store per user (`%APPDATA%\Kura\kura.cfg`); remembers firmware path, log level, wizard completion; malformed/unknown lines tolerated (`core/common/settings`)
-- `kura_boot.exe` — the power-on window: frameless Win11-style translucent (DWM acrylic backdrop, rounded corners, dark mode) Win32+GDI GUI with splash fade-in, first-run setup wizard (firmware picker + log level), and a live firmware-pipeline pane streaming `kura_pup` output with an honest verdict line at the encryption wall (`frontend/boot`)
+- `kura_boot.exe` — the power-on window: frameless Win11-style translucent (DWM acrylic backdrop, rounded corners, dark mode) Win32+GDI GUI with splash fade-in, first-run setup wizard (firmware picker + log level), and a staged boot checklist driven by the real `kura_pup` pipeline — power on → firmware located (real file size) → SLB2 parsed → decryption `[HALT]` at the encryption wall, with marquee progress bar, verdict + next-steps note, and the raw pipeline log behind "Show details" (`frontend/boot`)
 - Subsequent launches detect saved settings and boot straight to the pipeline (wizard once, then remembered)
 - Fixed on the way: child controls parented before window-handle assignment (invisible UI), black-on-black labels (dark-theme control colors), clipped verdict text
 - Tests: `unit.settings` round-trip + malformed-input coverage — 8/8 suites green
