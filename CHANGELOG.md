@@ -8,6 +8,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 8 — dynlib module registry (machinery; syscall numbers TBD)**
+- `Dynlib` (`core/kernel/dynlib.*`) — loads ELF64 modules into guest memory at a bump base (`0x4000000000`), parses `SHT_SYMTAB` + `.strtab` symbol tables, resolves names to rebased (ET_DYN) or absolute (ET_EXEC) addresses, handle-based `unload` unmaps the segment; garbage/truncated/not-ELF input rejected outright, never crashes
+- Wired `Kernel::dynlib()` for library-HLE shims to register under
+- **Deliberately not fabricated**: `sys_dynlib_*` syscall numbers are Sony-proprietary (600+ range) — thin wrappers land only once real-binary verification is possible (per the never-guess-a-number policy)
+- New `unit.dynlib` suite: synthetic ELF builder (header/phdr/symtab/strtab/shstrtab/section headers), parse/rebase/unknown-name/unknown-handle/unload/unmap, and an **end-to-end guest thread that `call`s the resolved symbol address** (`FF D0`) and exits with the return value — 11/11 suites green
+
+**M3 stage 7 — syscall trace harness (the M3 exit gate)**
+- `Kernel::syscall_count()` / `enosys_count()` counters; every dispatched syscall logs a per-call `trace` line, unknown numbers increment the ENOSYS counter
+- Tests assert `enosys_count() == 0` after running threaded guest programs — "syscall trace is clean" per `DESIGN.md` M3 exit criteria
+- Note: `exit` (1) routes through the interpreter's exit hook and is intentionally not counted as a dispatched syscall
+
+**M3 stage 6 — threads + futex (cooperative green-thread scheduler)**
+- `thr_new` (431), `thr_exit` (432), `__umtx_op` (454), `thr_self` (456) — all **predicted** FreeBSD amd64 numbers, wrong number degrades to `-ENOSYS`
+- Scheduler: one `cpu::Interpreter` per thread over its own `CpuState`, shared `GuestMemory`; `std::vector<std::unique_ptr<Thread>>` keeps thread refs address-stable; quantum 20 000 instructions, blocking syscalls end the quantum early (`pending_stop_` with RAX already set + RIP past SYSCALL → seamless resume)
+- `run_guest(max_quanta)` carries a watchdog and futex-deadlock detection — a deadlocked guest is reported and unwound, never a hung window (the "never crash/hang the PC" rule applied to scheduling)
+- `nanosleep` now blocks the calling thread under the scheduler (host sleep kept only for the legacy single-thread path)
+- `thr_new` predicted param layout: +0 arg, +8 stack_base, +16 stack_size, +24 child_fn; `stack_size == 0` → kernel hands out 64 KiB from a heap bump
+- Fixed en route: `spawn_thread` never incremented `next_tid_` — every thread got tid 1, so `thr_self` returned the wrong tid and `find_thread` matched the wrong thread (caught by the new multi-threaded test, not by review)
+- Four new `unit.kernel` tests: multi-threaded guest futex (spawn → cross-wake → `exit(42)`, trace clean, exactly 5 dispatched syscalls), scheduler sleep timing, futex-deadlock detection, two interleaved CPU-bound workers with cross-wakes — 10/10 suites green at the time
+
 **M3 stage 5 — file-backed mmap**
 - `mmap` with a real fd now maps file bytes into guest memory through the Vfs (host-bridge files included — they're materialized on open, so every fd is store-resolvable); offset-into-file supported, tail past EOF zero-filled (POSIX would SIGBUS — documented deviation until paging)
 - Rejections: non-anon with `fd < 0` → `EINVAL`, `MAP_SHARED` file maps → `-ENOSYS` (writeback pending), bad fd → `EBADF`, offset past EOF → `EINVAL`

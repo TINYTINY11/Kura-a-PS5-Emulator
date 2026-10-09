@@ -34,6 +34,10 @@ const char* sys::name(std::uint64_t nr) {
         case kStat: return "stat";
         case kFstat: return "fstat";
         case kLstat: return "lstat";
+        case kThrNew: return "thr_new";
+        case kThrExit: return "thr_exit";
+        case kThrSelf: return "thr_self";
+        case kUmtx: return "__umtx_op";
         default: return "unknown";
     }
 }
@@ -162,7 +166,21 @@ bool Kernel::on_syscall(cpu::CpuState& st) {
     const std::uint64_t nr = st.gpr[cpu::RAX];
     const std::int64_t rv = dispatch(nr, st);
     st.gpr[cpu::RAX] = static_cast<std::uint64_t>(rv);
-    return true; // guest continues with the result in RAX
+    ++syscall_count_;
+    if (log::enabled(log::Level::Trace))
+        log::trace("kernel.sys", "syscall ", nr, " (", sys::name(nr),
+                   ") -> ", rv);
+    // Blocking/thr_exit syscalls end the quantum early — the scheduler
+    // (run_guest) reaps the stop kind and resumes the thread later. The
+    // return value is already in RAX and RIP already points past SYSCALL,
+    // so a resumed thread continues exactly where it left off.
+    return pending_stop_ == StopKind::None;
+}
+
+Kernel::StopKind Kernel::take_stop() {
+    const StopKind k = pending_stop_;
+    pending_stop_ = StopKind::None;
+    return k;
 }
 
 bool Kernel::on_exit(cpu::CpuState&, int code) {
@@ -349,6 +367,21 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
             log::debug("kernel.sys", "nanosleep clamped to 250ms");
             d = kMax;
         }
+        if (scheduling_) {
+            // Under the scheduler a sleep BLOCKS the thread only — other
+            // guest threads keep running during the wait.
+            if (Thread* self = find_thread(running_tid_)) {
+                self->wake_ns =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count() +
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(d)
+                        .count();
+                self->status = Thread::Status::Sleeping;
+                pending_stop_ = StopKind::Blocked;
+                return 0;
+            }
+        }
         std::this_thread::sleep_for(d);
         return 0;
     }
@@ -376,6 +409,82 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
         if (!vfs_.stat_fd(static_cast<int>(a0), si)) return -kEBADF;
         if (!write_stat(mem_, a1, si)) return -kEFAULT;
         return 0;
+    }
+
+    case kThrNew: {
+        // PREDICTED thr_param subset (verify against real binaries):
+        //   +0 arg, +8 stack_base, +16 stack_size, +24 child_fn
+        if (a0 == 0) return -kEFAULT;
+        std::uint64_t garg = 0, base = 0, st_size = 0, fn = 0;
+        if (!mem_.read_value(a0, garg) || !mem_.read_value(a0 + 8, base) ||
+            !mem_.read_value(a0 + 16, st_size) ||
+            !mem_.read_value(a0 + 24, fn))
+            return -kEFAULT;
+        if (fn == 0) return -kEINVAL;
+        std::uint64_t top = 0;
+        if (st_size == 0) {
+            // Caller supplied no stack — kernel hands out 64 KiB from the
+            // heap bump (friendlier default; FreeBSD would demand one).
+            constexpr std::uint64_t kStackSize = 0x10000;
+            if (!mem_.map(heap_next_, kStackSize)) return -kENOMEM;
+            top = heap_next_ + kStackSize;
+            heap_next_ += kStackSize + 0x1000;
+        } else {
+            if (!mem_.is_mapped(base, 1)) {
+                if (!mem_.map(base, (st_size + 0xFFF) & ~0xFFFull))
+                    return -kENOMEM;
+            }
+            top = base + st_size;
+        }
+        Thread* t = spawn_thread("thr", fn, garg, top);
+        log::debug("kernel.sched", "thr_new -> tid ", t->tid, " entry 0x",
+                   std::hex, fn, std::dec, " stack top 0x", std::hex, top,
+                   std::dec);
+        return static_cast<std::int64_t>(t->tid);
+    }
+
+    case kThrExit: {
+        // Predicted: arg0 = exit status value (FreeBSD passes void*).
+        if (Thread* self = find_thread(running_tid_))
+            self->exit_code = static_cast<int>(a0);
+        pending_stop_ = StopKind::ThreadExit; // never returns to the guest
+        return 0;
+    }
+
+    case kThrSelf:
+        return running_tid_ != 0 ? static_cast<std::int64_t>(running_tid_)
+                                 : -kENOSYS;
+
+    case kUmtx: {
+        const std::uint64_t op = a1;
+        if (op == kUmtxWait) {
+            // __umtx_op(NULL, UMTX_OP_WAIT, uaddr, expected, 0): block while
+            // *(uint32*)uaddr == expected (Linux-futex-style semantics).
+            Thread* self = find_thread(running_tid_);
+            if (self == nullptr || a2 == 0) return -kEINVAL;
+            std::uint32_t cur = 0;
+            if (!mem_.read_value(a2, cur)) return -kEFAULT;
+            if (cur != static_cast<std::uint32_t>(a3)) return -kEAGAIN;
+            self->status = Thread::Status::FutexWait;
+            self->futex_addr = a2;
+            pending_stop_ = StopKind::Blocked;
+            return 0;
+        }
+        if (op == kUmtxWake) {
+            // Wake up to `a3` waiters queued on uaddr.
+            const std::uint64_t count = a3;
+            std::uint64_t woken = 0;
+            for (auto& t : threads_) {
+                if (t->status == Thread::Status::FutexWait &&
+                    t->futex_addr == a2) {
+                    t->status = Thread::Status::Ready;
+                    t->futex_addr = 0;
+                    if (++woken >= count) break;
+                }
+            }
+            return static_cast<std::int64_t>(woken);
+        }
+        return -kENOSYS; // requeue, timeout variants, ... (later)
     }
 
     case kSysctl: {
@@ -427,10 +536,168 @@ std::int64_t Kernel::dispatch(std::uint64_t nr, cpu::CpuState& st) {
     }
 
     default:
+        ++enosys_count_;
         log::debug("kernel.sys", "syscall ", nr, " (", name(nr),
                    ") not implemented — returning ENOSYS");
         return -kENOSYS;
     }
+}
+
+Thread* Kernel::spawn_thread(const std::string& name, std::uint64_t entry,
+                             std::uint64_t arg, std::uint64_t stack_top) {
+    auto t = std::make_unique<Thread>();
+    t->tid = next_tid_++;
+    t->tgid = current_pid_;
+    t->name = name;
+    t->state.rip = entry;
+    t->state.gpr[cpu::RDI] = arg;
+    t->state.gpr[cpu::RSP] = stack_top & ~0xFull; // SysV: 16-byte aligned
+    t->state.gpr[cpu::RBP] = 0;
+    t->state.rflags = cpu::kFlagFixed;
+    t->interp = std::make_unique<cpu::Interpreter>(mem_, t->state);
+    install(*t->interp);
+    threads_.push_back(std::move(t));
+    return threads_.back().get(); // heap-stable: refs never dangle
+}
+
+Thread* Kernel::find_thread(std::uint64_t tid) {
+    for (auto& t : threads_)
+        if (t->tid == tid) return t.get();
+    return nullptr;
+}
+
+int Kernel::run_guest(std::uint64_t max_quanta) {
+    if (threads_.empty()) {
+        log::error("kernel.sched", "run_guest: no threads to run");
+        had_fault_ = true;
+        return 1;
+    }
+    scheduling_ = true;
+    had_fault_ = false;
+    std::size_t cursor = 0;
+    std::uint64_t quanta = 0;
+    int rc = 0;
+    const auto now_ns = [] {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+    const auto all_exited = [&] {
+        for (const auto& t : threads_)
+            if (t->status != Thread::Status::Exited) return false;
+        return true;
+    };
+
+    for (;;) {
+        if (has_exited()) { // exit() reached: whole thread group is done
+            for (auto& t : threads_) t->status = Thread::Status::Exited;
+            rc = exit_code();
+            break;
+        }
+        if (all_exited()) { // every thread retired without process exit()
+            rc = exit_code();
+            break;
+        }
+
+        // Wake sleepers whose deadline passed.
+        const std::int64_t now = now_ns();
+        for (auto& t : threads_)
+            if (t->status == Thread::Status::Sleeping && t->wake_ns <= now)
+                t->status = Thread::Status::Ready;
+
+        // Round-robin pick of the next Ready thread.
+        Thread* next = nullptr;
+        std::size_t idx = 0;
+        for (std::size_t scanned = 0; scanned < threads_.size(); ++scanned) {
+            const std::size_t i = (cursor + scanned) % threads_.size();
+            if (threads_[i]->status == Thread::Status::Ready) {
+                next = threads_[i].get();
+                idx = i;
+                break;
+            }
+        }
+
+        if (next == nullptr) {
+            // Nobody runnable: sleep until the earliest timer, or declare
+            // deadlock if only futex waiters remain (never hang the host).
+            std::int64_t earliest = 0;
+            for (const auto& t : threads_)
+                if (t->status == Thread::Status::Sleeping &&
+                    (earliest == 0 || t->wake_ns < earliest))
+                    earliest = t->wake_ns;
+            if (earliest == 0) {
+                log::error("kernel.sched",
+                           "deadlock: all threads blocked (futex waiters "
+                           "with no waker) — giving up");
+                had_fault_ = true;
+                rc = exit_code();
+                break;
+            }
+            const std::int64_t wait = earliest - now_ns();
+            if (wait > 0)
+                std::this_thread::sleep_for(
+                    std::chrono::nanoseconds(std::min<std::int64_t>(
+                        wait, 20'000'000))); // re-check at least every 20ms
+            continue;
+        }
+
+        if (++quanta > max_quanta) {
+            log::error("kernel.sched", "watchdog: ", max_quanta,
+                       " quanta exhausted — stopping (guest may be stuck)");
+            had_fault_ = true;
+            rc = exit_code();
+            break;
+        }
+
+        cursor = (idx + 1) % threads_.size();
+        running_tid_ = next->tid;
+        pending_stop_ = StopKind::None;
+        next->status = Thread::Status::Running;
+        const cpu::RunResult r = next->interp->run(kQuantum);
+
+        switch (r.reason) {
+        case cpu::StopReason::StepLimit: // quantum spent — requeue
+            next->status = Thread::Status::Ready;
+            break;
+        case cpu::StopReason::Halted: // HLT acts as a yield
+            next->status = Thread::Status::Ready;
+            break;
+        case cpu::StopReason::Exited: // exit(): process-level
+            for (auto& t : threads_) t->status = Thread::Status::Exited;
+            rc = exit_code();
+            running_tid_ = 0;
+            goto done;
+        case cpu::StopReason::Syscall: // deliberate kernel stop
+            switch (take_stop()) {
+            case StopKind::ThreadExit:
+                next->status = Thread::Status::Exited;
+                log::trace("kernel.sched", "tid ", next->tid,
+                           " exited (thr_exit ", next->exit_code, ")");
+                break;
+            case StopKind::Blocked: // status set by dispatch (Sleep/Futex)
+                break;
+            case StopKind::None:
+                log::error("kernel.sched", "tid ", next->tid,
+                           " stopped without a kernel reason");
+                had_fault_ = true;
+                next->status = Thread::Status::Exited;
+                break;
+            }
+            break;
+        default: // guest fault: log and retire the thread, never the host
+            log::error("kernel.sched", "tid ", next->tid, " faulted: ",
+                       cpu::to_string(r.reason), " — ", r.detail);
+            had_fault_ = true;
+            next->status = Thread::Status::Exited;
+            next->exit_code = -1;
+            break;
+        }
+        running_tid_ = 0;
+    }
+done:
+    scheduling_ = false;
+    running_tid_ = 0;
+    return rc;
 }
 
 } // namespace kura::kernel

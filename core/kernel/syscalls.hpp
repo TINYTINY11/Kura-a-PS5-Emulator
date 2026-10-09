@@ -49,6 +49,16 @@ inline constexpr std::uint64_t kStat = 188;   // stat(path, buf)
 inline constexpr std::uint64_t kFstat = 189;  // fstat(fd, buf)
 inline constexpr std::uint64_t kLstat = 190;  // lstat(path, buf) — no symlinks
 
+// --- added in M3 stage 6 (threads + futex) ---------------------------------
+inline constexpr std::uint64_t kThrNew = 431;  // thr_new(param, param_size)
+inline constexpr std::uint64_t kThrExit = 432; // thr_exit(status) — noreturn
+inline constexpr std::uint64_t kUmtx = 454;    // __umtx_op(...) — futex family
+inline constexpr std::uint64_t kThrSelf = 456; // thr_self() -> tid
+
+// __umtx_op opcodes (FreeBSD sys/umtx.h)
+inline constexpr std::uint64_t kUmtxWait = 0;
+inline constexpr std::uint64_t kUmtxWake = 1;
+
 // Commonly reached but not yet implemented — these return -kENOSYS, which
 // real binaries treat as "feature absent" and route around.
 inline constexpr std::uint64_t kMprotect = 74;

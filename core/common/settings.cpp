@@ -19,10 +19,18 @@ std::string trim(const std::string& s) {
 std::string default_path() {
     namespace fs = std::filesystem;
 #ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
-    fs::path base = (appdata != nullptr && *appdata != '\0')
-                        ? fs::path(appdata)
-                        : fs::temp_directory_path();
+    // _dupenv_s instead of getenv: MSVC flags getenv as C4996 and Kura
+    // keeps a zero-warning build.
+    char* appdata = nullptr;
+    std::size_t len = 0;
+    _dupenv_s(&appdata, &len, "APPDATA");
+    fs::path base;
+    if (appdata != nullptr && *appdata != '\0') {
+        base = fs::path(appdata);
+    } else {
+        base = fs::temp_directory_path();
+    }
+    free(appdata);
     return (base / "Kura" / "kura.cfg").string();
 #else
     const char* home = std::getenv("HOME");

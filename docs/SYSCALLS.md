@@ -39,22 +39,48 @@ binaries route around) · ⏳ planned
 | 190 | `lstat` | ✅ | `== stat` — no symlinks in the stage-4 Vfs |
 | 202 | `sysctl` | ✅ | read-only tree: `kern.osrelease`, `kern.argmax`, `hw.pagesize`, `hw.ncpu`; full `oldlenp` probe/short-buffer semantics |
 | 232 | `clock_gettime` | ✅ | `CLOCK_REALTIME` + `CLOCK_MONOTONIC` (FreeBSD id 4) |
+| 431 | `thr_new` | ✅ | predicted param layout (+0 arg, +8 stack_base, +16 stack_size, +24 child_fn); `stack_size==0` → kernel hands out 64 KiB from a heap bump; cooperative green threads |
+| 432 | `thr_exit` | ✅ | thread exits with code, process keeps running while others live; `exit` (1) still tears down all threads |
+| 454 | `__umtx_op` | ✅ | `WAIT` blocks while `*(u32*)uaddr == expected` (else `-EAGAIN`), `WAKE` wakes up to N waiters — Linux-futex-style shape, **numbers predicted** |
+| 456 | `thr_self` | ✅ | returns the running tid |
 | 477 | `mmap` | ✅ | anonymous, `MAP_FIXED`, and **file-backed** (fd bytes via Vfs; tail past EOF zero-filled); `MAP_SHARED` file maps → `-ENOSYS` pending writeback |
 | 478 | `lseek` | ✅ | `SEEK_SET/CUR/END` |
 
 Also tolerated: any unknown number → `-ENOSYS` (logged at debug), which
 real FreeBSD binaries treat as "feature absent".
 
+## Scheduler (M3 stage 6)
+
+Cooperative green threads — deterministic, race-free by construction
+(`DESIGN.md` §11): one `cpu::Interpreter` per thread over its own
+`CpuState`, one shared `GuestMemory`. Quantum = 20 000 instructions;
+a blocking syscall ends the quantum early (RAX already set, RIP already
+past SYSCALL, so resume is seamless). `run_guest` carries a watchdog and
+futex-deadlock detection — a deadlocked guest is *reported*, never a hung
+window.
+
+## Syscall trace (M3 stage 7)
+
+`Kernel::syscall_count()` / `enosys_count()` are the M3 exit gate
+("syscall trace is clean"). Every dispatched syscall logs a `trace` line;
+a unit test asserts `enosys_count() == 0` after a threaded guest program.
+`exit` (1) runs through the interpreter's exit hook and is intentionally
+**not** counted as a dispatched syscall.
+
+## dynlib (M3 stage 8 — module machinery, numbers TBD)
+
+| area | status | notes |
+|---|---|---|
+| ELF module loader (`Dynlib::load`) | ✅ | ET_DYN/ET_EXEC ELF64 → mapped into guest memory at a bump base `0x4000000000`; symbol table (`SHT_SYMTAB` + `.strtab`) parsed; `resolve()` returns rebased (PIE) or absolute (EXEC) addresses; handle-based `unload` unmaps |
+| `sys_dynlib_*` syscall numbers | ⏳ | Sony-proprietary (600+ range) — **deliberately not fabricated**; thin wrappers land once real-binary verification is possible |
+
 ## Next up (per DESIGN.md M3 exit criteria)
 
 | area | status | notes |
 |---|---|---|
-| threads (`thr_new` family, FreeBSD 430s) | ⏳ | needs a scheduler + per-thread interpreter state; the M3 exit gate ("multi-threaded guest tests run") |
-| futex / `__umtx_op` (~454, predicted) | ⏳ | pairs with threads |
 | `wait4` (7, high confidence) | ⏳ | first real process-management syscall |
-| dynlib (`sys_dynlib_*`, Sony-proprietary 600+ range) | ⏳ | numbers require PS5-specific research; stub family planned |
-| signals (`sigaction`, `kill`, `sigreturn`) | ⏳ | delivery needs guest signal frames — after threads |
-| syscall trace/coverage harness | ⏳ | DESIGN: "syscall trace is clean" is the M3 exit test |
+| signals (`sigaction`, `kill`, `sigreturn`) | ⏳ | delivery needs guest signal frames |
+| `sys_dynlib_*` wrappers | ⏳ | machinery done (stage 8); numbers pending verification |
 
 ## Verification policy
 

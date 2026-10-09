@@ -7,6 +7,7 @@ add_library(kura_core STATIC
   loader/elf.cpp
   cpu/interpreter.cpp
   kernel/vfs.cpp
+  kernel/dynlib.cpp
   kernel/kernel.cpp
 )
 

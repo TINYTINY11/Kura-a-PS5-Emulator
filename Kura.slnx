@@ -14,6 +14,7 @@
 		<BuildDependency Project="frontend/cli/kura_cli.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_cpu_tests.vcxproj"/>
+		<BuildDependency Project="tests/unit/kura_dynlib_tests.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_elf_tests.vcxproj"/>
 		<BuildDependency Project="tools/firmware/kura_firmware.vcxproj"/>
 		<BuildDependency Project="tests/unit/kura_hostbridge_tests.vcxproj"/>
@@ -53,6 +54,10 @@
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 	</Project>
 	<Project Path="tests/unit/kura_cpu_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="9ecc7ea1-d338-332e-b5fd-9192f9428fc8">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		<BuildDependency Project="core/kura_core.vcxproj"/>
+	</Project>
+	<Project Path="tests/unit/kura_dynlib_tests.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="d20fe6f7-7ae0-31b3-829c-e996e9f1c363">
 		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
 		<BuildDependency Project="core/kura_core.vcxproj"/>
 	</Project>

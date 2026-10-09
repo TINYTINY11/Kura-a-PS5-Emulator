@@ -481,6 +481,295 @@ void test_file_backed_mmap() {
     CHECK(call(k, st) == -sys::kEINVAL);
 }
 
+// --- M3 stage 6: cooperative scheduler over hand-assembled guest code -------
+
+// Data layout shared by the threaded tests:
+//   0x100000  thr_param structs / scratch
+//   0x101000  counter (test 1), +4 = child thr_self slot
+//   0x102000  ca (test 4, worker A's counter)
+//   0x103000  cb (test 4, worker B's counter)
+//   0x104000  done (test 4)
+//   0x200000..0x208000  main stack (top 0x208000)
+//   0x300000..          worker stacks (mapped by thr_new)
+constexpr std::uint64_t kData = 0x100000;
+constexpr std::uint64_t kCounter = 0x101000;
+constexpr std::uint64_t kCa = 0x102000;
+constexpr std::uint64_t kCb = 0x103000;
+constexpr std::uint64_t kDone = 0x104000;
+constexpr std::uint64_t kMainStackTop = 0x208000;
+
+void write_param(GuestMemory& mem, std::uint64_t at, std::uint64_t arg,
+                 std::uint64_t stack_base, std::uint64_t stack_size,
+                 std::uint64_t child_fn) {
+    CHECK(mem.write_value(at + 0, arg));
+    CHECK(mem.write_value(at + 8, stack_base));
+    CHECK(mem.write_value(at + 16, stack_size));
+    CHECK(mem.write_value(at + 24, child_fn));
+}
+
+void test_multithreaded_guest_futex() {
+    // The M3 exit criterion: a guest program that spawns a thread, blocks
+    // on a futex, gets woken by the child, and observes the child's write.
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kData, 0x5000));
+    CHECK(mem.map(0x400000, 0x1000));
+    CHECK(mem.map(0x200000, 0x8000)); // main stack
+
+    // main @ 0x400000: thr_new(param); for(;;) umtx WAIT(counter==0);
+    //                 exit(counter)
+    const std::vector<std::uint8_t> main_code = {
+        0x48, 0xC7, 0xC7, 0x00, 0x00, 0x10, 0x00, // mov rdi, 0x100000
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0
+        0x48, 0xC7, 0xC0, 0xAF, 0x01, 0x00, 0x00, // mov rax, 431 (thr_new)
+        0x0F, 0x05,                               // syscall -> rax = tid
+        0x48, 0xC7, 0xC3, 0x00, 0x10, 0x10, 0x00, // mov rbx, &counter
+        // wait_loop:
+        0x31, 0xFF,                               // xor edi, edi (owner NULL)
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0 (UMTX_OP_WAIT)
+        0x48, 0xC7, 0xC2, 0x00, 0x10, 0x10, 0x00, // mov rdx, &counter
+        0x49, 0xC7, 0xC2, 0x00, 0x00, 0x00, 0x00, // mov r10, 0 (expected)
+        0x4D, 0x31, 0xC0,                         // xor r8, r8 (no timeout)
+        0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00, // mov rax, 454 (__umtx_op)
+        0x0F, 0x05,                               // syscall
+        0x8B, 0x03,                               // mov eax, [rbx]
+        0x85, 0xC0,                               // test eax, eax
+        0x74, 0xD7,                               // je wait_loop
+        0x89, 0xC7,                               // mov edi, eax (counter)
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1 (exit)
+        0x0F, 0x05,                               // syscall
+    };
+    // child @ 0x400052: store thr_self() tid; counter = 42; umtx WAKE;
+    //                   thr_exit(0) — the tid store happens BEFORE the wake
+    //                   so main's exit() can never retire this thread first.
+    const std::vector<std::uint8_t> child_code = {
+        0x48, 0xC7, 0xC3, 0x00, 0x10, 0x10, 0x00, // mov rbx, &counter
+        0x48, 0xC7, 0xC0, 0xC8, 0x01, 0x00, 0x00, // mov rax, 456 (thr_self)
+        0x0F, 0x05,                               // syscall
+        0x89, 0x43, 0x04,                         // mov [rbx+4], eax
+        0xC7, 0x03, 0x2A, 0x00, 0x00, 0x00,       // mov dword [rbx], 42
+        0x31, 0xFF,                               // xor edi, edi
+        0x48, 0xC7, 0xC6, 0x01, 0x00, 0x00, 0x00, // mov rsi, 1 (UMTX_OP_WAKE)
+        0x48, 0xC7, 0xC2, 0x00, 0x10, 0x10, 0x00, // mov rdx, &counter
+        0x49, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, // mov r10, 1 (wake 1)
+        0x4D, 0x31, 0xC0,                         // xor r8, r8
+        0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00, // mov rax, 454
+        0x0F, 0x05,                               // syscall
+        0x31, 0xFF,                               // xor edi, edi
+        0x48, 0xC7, 0xC0, 0xB0, 0x01, 0x00, 0x00, // mov rax, 432 (thr_exit)
+        0x0F, 0x05,                               // syscall
+    };
+    CHECK(mem.write(0x400000, main_code.data(), main_code.size()));
+    CHECK(mem.write(0x400052, child_code.data(), child_code.size()));
+    write_param(mem, kData, 0, 0x300000, 0x8000, 0x400052);
+
+    kura::kernel::Thread* main_t = k.spawn_thread("main", 0x400000, 0,
+                                                  kMainStackTop);
+    CHECK(main_t != nullptr);
+    CHECK(main_t->tid == 1);
+
+    const int rc = k.run_guest(100'000);
+    CHECK(rc == 42);       // exit(counter) observed the child's write
+    CHECK(!k.had_fault());
+    std::uint32_t counter = 0, self_slot = 0;
+    CHECK(mem.read_value(kCounter, counter));
+    CHECK(counter == 42);  // child really ran and wrote guest memory
+    CHECK(mem.read_value(kCounter + 4, self_slot));
+    CHECK(self_slot == 2); // thr_self returned the child's tid
+    CHECK(k.threads().size() == 2);
+    for (const auto& t : k.threads())
+        CHECK(t->status == kura::kernel::Thread::Status::Exited);
+    CHECK(k.enosys_count() == 0); // syscall trace is clean
+    // thr_new, WAIT | WAKE, thr_self, thr_exit — exit goes through the
+    // exit hook, not the syscall hook, so it is not counted here.
+    CHECK(k.syscall_count() == 5);
+}
+
+void test_scheduler_sleep() {
+    // A sleeping thread blocks only itself; the scheduler host-sleeps until
+    // its deadline when nothing else is runnable, then resumes it.
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kData, 0x1000));
+    CHECK(mem.map(0x400000, 0x1000));
+    CHECK(mem.map(0x200000, 0x8000));
+    CHECK(mem.write_value<std::int64_t>(kData, 0));          // tv_sec
+    CHECK(mem.write_value<std::int64_t>(kData + 8, 30'000'000)); // 30 ms
+
+    const std::vector<std::uint8_t> code = {
+        0x48, 0xC7, 0xC7, 0x00, 0x00, 0x10, 0x00, // mov rdi, 0x100000
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0 (no rem)
+        0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00, // mov rax, 60 (nanosleep)
+        0x0F, 0x05,                               // syscall
+        0x48, 0xC7, 0xC7, 0x07, 0x00, 0x00, 0x00, // mov rdi, 7
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1 (exit)
+        0x0F, 0x05,                               // syscall
+    };
+    CHECK(mem.write(0x400000, code.data(), code.size()));
+    k.spawn_thread("main", 0x400000, 0, kMainStackTop);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const int rc = k.run_guest(1000);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+    CHECK(rc == 7);
+    CHECK(!k.had_fault());
+    CHECK(ms >= 25);   // the sleep really happened
+    CHECK(ms < 2000);  // and did not hang the host
+    CHECK(k.enosys_count() == 0);
+}
+
+void test_futex_deadlock_detected() {
+    // A lone thread futex-waits on a word nobody will ever wake. The
+    // scheduler must report a deadlock instead of hanging the host.
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kData, 0x1000));   // kData stays zero — never written
+    CHECK(mem.map(0x400000, 0x1000));
+    CHECK(mem.map(0x200000, 0x8000));
+
+    const std::vector<std::uint8_t> code = {
+        0x31, 0xFF,                               // xor edi, edi
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0 (WAIT)
+        0x48, 0xC7, 0xC2, 0x00, 0x00, 0x10, 0x00, // mov rdx, 0x100000
+        0x49, 0xC7, 0xC2, 0x00, 0x00, 0x00, 0x00, // mov r10, 0
+        0x4D, 0x31, 0xC0,                         // xor r8, r8
+        0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00, // mov rax, 454
+        0x0F, 0x05,                               // syscall — blocks forever
+        0x48, 0xC7, 0xC7, 0x63, 0x00, 0x00, 0x00, // mov rdi, 99 (unreachable)
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+        0x0F, 0x05,
+    };
+    CHECK(mem.write(0x400000, code.data(), code.size()));
+    k.spawn_thread("main", 0x400000, 0, kMainStackTop);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const int rc = k.run_guest(10'000);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+    CHECK(k.had_fault()); // deadlock reported, host never hung
+    CHECK(rc == 0);       // process never exited
+    CHECK(ms < 2000);
+}
+
+// Worker: add [self],1 until [self]==25000; WAIT(peer != 0);
+//         add [done],1; WAKE(done,1); thr_exit(0)
+std::vector<std::uint8_t> worker_code(std::uint32_t self,
+                                      std::uint32_t peer) {
+    std::vector<std::uint8_t> c;
+    auto b = [&](std::initializer_list<std::uint8_t> bytes) {
+        c.insert(c.end(), bytes);
+    };
+    auto u32 = [&](std::uint32_t v) {
+        c.push_back(static_cast<std::uint8_t>(v));
+        c.push_back(static_cast<std::uint8_t>(v >> 8));
+        c.push_back(static_cast<std::uint8_t>(v >> 16));
+        c.push_back(static_cast<std::uint8_t>(v >> 24));
+    };
+    b({0x48, 0xC7, 0xC3}); u32(self);              // mov rbx, self
+    const std::size_t loop = c.size();
+    b({0x83, 0x03, 0x01});                         // add dword [rbx], 1
+    b({0x81, 0x3B}); u32(25000);                   // cmp dword [rbx], 25000
+    b({0x75});                                     // jne loop
+    c.push_back(static_cast<std::uint8_t>(loop - (c.size() + 1)));
+    // WAKE our own counter first: a sibling already blocked on it must be
+    // released before we go wait on theirs, or both sleep forever.
+    b({0x31, 0xFF});                               // xor edi, edi
+    b({0x48, 0xC7, 0xC6, 0x01, 0x00, 0x00, 0x00}); // mov rsi, 1 (WAKE)
+    b({0x48, 0xC7, 0xC2}); u32(self);              // mov rdx, self
+    b({0x49, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00}); // mov r10, 1
+    b({0x4D, 0x31, 0xC0});                         // xor r8, r8
+    b({0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00}); // mov rax, 454
+    b({0x0F, 0x05});                               // syscall
+    b({0x48, 0xC7, 0xC2}); u32(peer);              // mov rdx, peer
+    const std::size_t wait = c.size();
+    b({0x31, 0xFF});                               // xor edi, edi
+    b({0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00}); // mov rsi, 0 (WAIT)
+    b({0x49, 0xC7, 0xC2, 0x00, 0x00, 0x00, 0x00}); // mov r10, 0
+    b({0x4D, 0x31, 0xC0});                         // xor r8, r8
+    b({0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00}); // mov rax, 454
+    b({0x0F, 0x05});                               // syscall
+    b({0x83, 0x3A, 0x00});                         // cmp dword [rdx], 0
+    b({0x74});                                     // je wait
+    c.push_back(static_cast<std::uint8_t>(wait - (c.size() + 1)));
+    b({0x48, 0xC7, 0xC3}); u32(static_cast<std::uint32_t>(kDone));
+    b({0x83, 0x03, 0x01});                         // add dword [rbx], 1
+    b({0x31, 0xFF});                               // xor edi, edi
+    b({0x48, 0xC7, 0xC6, 0x01, 0x00, 0x00, 0x00}); // mov rsi, 1 (WAKE)
+    b({0x48, 0xC7, 0xC2}); u32(static_cast<std::uint32_t>(kDone));
+    b({0x49, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00}); // mov r10, 1
+    b({0x4D, 0x31, 0xC0});                         // xor r8, r8
+    b({0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00}); // mov rax, 454
+    b({0x0F, 0x05});                               // syscall
+    b({0x31, 0xFF});                               // xor edi, edi
+    b({0x48, 0xC7, 0xC0, 0xB0, 0x01, 0x00, 0x00}); // mov rax, 432 (thr_exit)
+    b({0x0F, 0x05});                               // syscall
+    return c;
+}
+
+void test_interleaved_cpu_bound_workers() {
+    // Two CPU-bound workers that can only finish if the scheduler rotates
+    // between them: each spins past several quanta on its own counter, then
+    // waits for the sibling's. No interleaving => deadlock => test fails.
+    GuestMemory mem;
+    Kernel k(mem);
+    CHECK(mem.map(kData, 0x5000));
+    CHECK(mem.map(0x400000, 0x1000));
+    CHECK(mem.map(0x200000, 0x8000));
+
+    // main: thr_new(A); thr_new(B); wait for done==2; exit(7)
+    const std::vector<std::uint8_t> main_code = {
+        0x48, 0xC7, 0xC7, 0x00, 0x01, 0x10, 0x00, // mov rdi, 0x100100 (&paramA)
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0
+        0x48, 0xC7, 0xC0, 0xAF, 0x01, 0x00, 0x00, // mov rax, 431 (thr_new)
+        0x0F, 0x05,                               // syscall
+        0x48, 0xC7, 0xC7, 0x40, 0x01, 0x10, 0x00, // mov rdi, 0x100140 (&paramB)
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0
+        0x48, 0xC7, 0xC0, 0xAF, 0x01, 0x00, 0x00, // mov rax, 431
+        0x0F, 0x05,                               // syscall
+        0x48, 0xC7, 0xC3, 0x00, 0x40, 0x10, 0x00, // mov rbx, &done
+        // wait_loop:
+        0x31, 0xFF,                               // xor edi, edi
+        0x48, 0xC7, 0xC6, 0x00, 0x00, 0x00, 0x00, // mov rsi, 0 (WAIT)
+        0x48, 0xC7, 0xC2, 0x00, 0x40, 0x10, 0x00, // mov rdx, &done
+        0x49, 0xC7, 0xC2, 0x00, 0x00, 0x00, 0x00, // mov r10, 0
+        0x4D, 0x31, 0xC0,                         // xor r8, r8
+        0x48, 0xC7, 0xC0, 0xC6, 0x01, 0x00, 0x00, // mov rax, 454
+        0x0F, 0x05,                               // syscall
+        0x8B, 0x03,                               // mov eax, [rbx]
+        0x83, 0xF8, 0x02,                         // cmp eax, 2
+        0x7C, 0xD6,                               // jl wait_loop
+        0x48, 0xC7, 0xC7, 0x07, 0x00, 0x00, 0x00, // mov rdi, 7
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1 (exit)
+        0x0F, 0x05,                               // syscall
+    };
+    CHECK(mem.write(0x400000, main_code.data(), main_code.size()));
+    const auto wa = worker_code(static_cast<std::uint32_t>(kCa),
+                                static_cast<std::uint32_t>(kCb));
+    const auto wb = worker_code(static_cast<std::uint32_t>(kCb),
+                                static_cast<std::uint32_t>(kCa));
+    CHECK(mem.write(0x400100, wa.data(), wa.size()));
+    CHECK(mem.write(0x400200, wb.data(), wb.size()));
+    write_param(mem, kData + 0x100, 0, 0x300000, 0x8000, 0x400100);
+    write_param(mem, kData + 0x140, 0, 0x310000, 0x8000, 0x400200);
+
+    k.spawn_thread("main", 0x400000, 0, kMainStackTop);
+    const int rc = k.run_guest(500'000);
+    CHECK(rc == 7);
+    CHECK(!k.had_fault());
+    std::uint32_t ca = 0, cb = 0, done = 0;
+    CHECK(mem.read_value(kCa, ca));
+    CHECK(mem.read_value(kCb, cb));
+    CHECK(mem.read_value(kDone, done));
+    CHECK(ca == 25000); // both workers ran to completion
+    CHECK(cb == 25000);
+    CHECK(done == 2);
+    CHECK(k.threads().size() == 3);
+    CHECK(k.enosys_count() == 0);
+}
+
 } // namespace
 
 int main() {
@@ -496,6 +785,10 @@ int main() {
     test_stat_family();
     test_file_backed_mmap();
     test_guest_program_syscalls_end_to_end();
+    test_multithreaded_guest_futex();
+    test_scheduler_sleep();
+    test_futex_deadlock_detected();
+    test_interleaved_cpu_bound_workers();
     if (g_failures == 0) std::cout << "test_kernel: all checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }
