@@ -371,6 +371,15 @@ Sequencing rationale: M4 (GPU) is started in parallel with M3 by whoever isn't b
 | Solo scope creep | Never finishes | Shell-first priority rule; **no game work until M6** |
 | Native-execution backend security (if adopted) | Host compromise risk | Ship interpreter-only by default; native backend opt-in, sandboxed |
 
+**Host safety guarantees (design rules — never violate these):**
+
+- **User mode only.** No kernel drivers, no admin/root required, no system files or settings touched. If Windows asks for elevation, Kura is doing something wrong.
+- **Everything is process-local.** All emulated state lives inside `kura.exe` — a guest hang or crash can only ever kill Kura itself (Task Manager → End task), never the host OS.
+- **CPU is safe by construction.** The interpreter interprets; it cannot execute guest code on the host. Any future native/JIT backend is strictly opt-in, off by default, memory-isolated with guard pages, and documented as experimental.
+- **GPU worst case = driver reset, not a crash.** Long-hanging GPU work can trigger a display-driver reset (brief flicker) — annoying, but the system recovers. Mitigations: frame pacing (M7), and Vulkan validation layers in debug builds catch misuse before the driver sees it.
+- **Bounded resource use.** Guest memory is a fixed ~16 GB reservation (sparse, committed on demand) — Kura can't eat the disk or RAM. Log files are small and flushed line-by-line.
+- **Tools touch only user-selected files.** The firmware tool reads a PUP path you give it and writes to folders you choose — never elsewhere.
+
 ---
 
 ## 12. Legal / ethical constraints (read before M1)

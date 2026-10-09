@@ -21,5 +21,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CLI entry point `kura` — `--log-level`, `--log-file`, `--firmware` (M1 stub), `--check-host`
 - Unit tests via CTest (`unit.log`, `unit.net_filter`)
 - GitHub Actions CI — builds and tests on Windows and Ubuntu
+- Host safety guarantees documented (design doc §11): user mode only, process-local state, interpreter-safe CPU, bounded resources
 
 [Unreleased]: https://github.com/TINYTINY11/Kura-a-PS5-Emulator/commits/main
