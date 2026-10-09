@@ -8,6 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+**M3 stage 1 — kernel HLE skeleton (FreeBSD-style syscalls)**
+- `Kernel` — process table (init pid 1 + spawn), syscall dispatch into RAX with FreeBSD-style `-errno` returns, interpreter hooks for SYSCALL/exit, anonymous mmap via a bump allocator with guard gaps, host clock via `gettimeofday` (`core/kernel/kernel.*`)
+- `Vfs` — in-memory namespace with POSIX-ish semantics: fd table with stdin/EOF + stdout/stderr capture into the `guest.out` log channel, `open/read/write/lseek/close` with FreeBSD flag values, named store as source of truth so writes persist across fds and reopens (`core/kernel/vfs.*`)
+- Syscall numbers documented as **predicted** FreeBSD amd64 values pending real-binary verification (`core/kernel/syscalls.hpp`); unknown numbers return `-ENOSYS` (78)
+- Wired `kernel/*.cpp` into `kura_core`; `unit.kernel` test: getpid/spawn, ENOSYS, mmap round-trip + munmap, open→write→lseek→read→close with store persistence, tty capture, gettimeofday, and a full guest program running SYSCALLs through the interpreter end-to-end — 9/9 suites green
+
 **M3 stage 1.5 — first-startup experience (emulator UI, not emulated output)**
 - Settings module — tiny dependency-free key=value store per user (`%APPDATA%\Kura\kura.cfg`); remembers firmware path, log level, wizard completion; malformed/unknown lines tolerated (`core/common/settings`)
 - `kura_boot.exe` — the power-on window: frameless Win11-style translucent (DWM acrylic backdrop, rounded corners, dark mode) Win32+GDI GUI with splash fade-in, first-run setup wizard (firmware picker + log level), and a staged boot checklist driven by the real `kura_pup` pipeline — power on → firmware located (real file size) → SLB2 parsed → decryption `[HALT]` at the encryption wall, with marquee progress bar, verdict + next-steps note, and the raw pipeline log behind "Show details" (`frontend/boot`)

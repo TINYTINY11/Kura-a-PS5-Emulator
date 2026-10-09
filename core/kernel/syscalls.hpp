@@ -1,0 +1,73 @@
+#pragma once
+
+#include <cstdint>
+
+// FreeBSD amd64 syscall numbers and errno values.
+//
+// The PS5 kernel is a FreeBSD derivative: its *base* syscall table matches
+// public FreeBSD amd64 numbering (sys/syscalls.tbl). Sony additions live in
+// high ranges (600+) and are NOT included here yet — their numbers will be
+// filled in from real-binary analysis once decrypted firmware is available.
+//
+// Status of these numbers: predicted from public FreeBSD sources. Every
+// constant in this header gets a verification pass against real firmware
+// binaries when the decryption wall falls (docs/RE-pup.md).
+//
+// amd64 syscall ABI: number in RAX; arguments in RDI, RSI, RDX, R10, R8, R9
+// (RCX/R11 clobbered by the SYSCALL instruction itself). Return value in RAX;
+// on error the kernel returns -errno directly in RAX.
+
+namespace kura::kernel::sys {
+
+// --- syscalls we implement in M3 stage 1 ------------------------------------
+inline constexpr std::uint64_t kExit = 1;         // exit(int code)
+inline constexpr std::uint64_t kRead = 3;         // read(fd, buf, nbyte)
+inline constexpr std::uint64_t kWrite = 4;        // write(fd, buf, nbyte)
+inline constexpr std::uint64_t kOpen = 5;         // open(path, flags, mode)
+inline constexpr std::uint64_t kClose = 6;        // close(fd)
+inline constexpr std::uint64_t kGetpid = 20;      // getpid()
+inline constexpr std::uint64_t kMunmap = 73;      // munmap(addr, len)
+inline constexpr std::uint64_t kGettimeofday = 116; // gettimeofday(tv, tz)
+inline constexpr std::uint64_t kMmap = 477;       // mmap(...) — see kernel.cpp
+inline constexpr std::uint64_t kLseek = 478;      // lseek(fd, pad, off, whence)
+
+// Commonly reached but not yet implemented — these return -kENOSYS, which
+// real binaries treat as "feature absent" and route around.
+inline constexpr std::uint64_t kMprotect = 74;
+inline constexpr std::uint64_t kSysctl = 202;
+
+inline constexpr std::uint64_t kLinuxExit = 60; // Linux-style exit, tolerated
+
+const char* name(std::uint64_t nr);
+
+// --- FreeBSD errno (subset; values are part of the kernel ABI) ---------------
+inline constexpr int kEPERM = 1;
+inline constexpr int kENOENT = 2;
+inline constexpr int kEINTR = 4;
+inline constexpr int kEIO = 5;
+inline constexpr int kEBADF = 9;
+inline constexpr int kECHILD = 10;
+inline constexpr int kENOMEM = 12;
+inline constexpr int kEACCES = 13;
+inline constexpr int kEFAULT = 14;
+inline constexpr int kEBUSY = 16;
+inline constexpr int kEEXIST = 17;
+inline constexpr int kENODEV = 19;
+inline constexpr int kENOTDIR = 20;
+inline constexpr int kEISDIR = 21;
+inline constexpr int kEINVAL = 22;
+inline constexpr int kENFILE = 23;
+inline constexpr int kEMFILE = 24;
+inline constexpr int kENOTTY = 25;
+inline constexpr int kEFBIG = 27;
+inline constexpr int kENOSPC = 28;
+inline constexpr int kESPIPE = 29;
+inline constexpr int kEROFS = 30;
+inline constexpr int kEPIPE = 32;
+inline constexpr int kERANGE = 34;
+inline constexpr int kEAGAIN = 35; // BSD numbering: EAGAIN is 35, not 11
+inline constexpr int kENAMETOOLONG = 63;
+inline constexpr int kENOSYS = 78;
+inline constexpr int kEOVERFLOW = 84;
+
+} // namespace kura::kernel::sys
